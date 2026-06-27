@@ -1,0 +1,16 @@
+{
+  "name": "aspex",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "typecheck": "bun run --filter '*' typecheck",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.0",
+    "bun-types": "latest",
+    "typescript": "^5.5.0"
+  }
+}

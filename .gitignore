@@ -1,14 +1,6 @@
 node_modules
 dist
 *.sqlite
-*.sqlite-wal
-*.sqlite-shm
 .aspex/
 target/
 .DS_Store
-
-# Secrets (Hub config may hold a GitHub token)
-.env
-.env.*
-!.env.example
-aspex.config.json
