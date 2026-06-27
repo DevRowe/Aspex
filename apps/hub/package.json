@@ -10,6 +10,7 @@
     "dev": "bun run src/index.ts"
   },
   "dependencies": {
+    "@aspex/adapter-claude-code": "workspace:*",
     "@aspex/adapter-github": "workspace:*",
     "@aspex/adapter-mock": "workspace:*",
     "@aspex/schema": "workspace:*",

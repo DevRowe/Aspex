@@ -1,5 +1,10 @@
 #!/usr/bin/env bun
 import { parseArgs } from "node:util";
+import {
+  installClaudeCodeHooks,
+  runHookRelay,
+  uninstallClaudeCodeHooks,
+} from "@aspex/adapter-claude-code";
 import { VERSION, buildHub } from "./boot";
 import { loadConfig } from "./config";
 
@@ -10,8 +15,8 @@ const HELP = `aspex ${VERSION}
 Usage:
   aspex hub [--config <path>] [--mock]
   aspex up [--config <path>] [--mock]
-  aspex hooks ...
-  aspex hook-relay ...
+  aspex hooks install|uninstall
+  aspex hook-relay --event <Name>
 
 Options:
   --config <path>  Load a JSON config file
@@ -26,6 +31,7 @@ async function main(argv: string[]): Promise<void> {
     allowPositionals: true,
     options: {
       config: { type: "string" },
+      event: { type: "string" },
       help: { type: "boolean", short: "h" },
       mock: { type: "boolean" },
       version: { type: "boolean", short: "v" },
@@ -59,14 +65,64 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
 
-  if (command === "hooks" || command === "hook-relay") {
-    console.log(`${command} is not yet installed; this arrives in card 16.`);
+  if (command === "hooks") {
+    await runHooksCommand(parsed.positionals.slice(1));
+    return;
+  }
+
+  if (command === "hook-relay") {
+    await runRelayCommand({
+      configPath:
+        typeof parsed.values.config === "string"
+          ? parsed.values.config
+          : undefined,
+      event:
+        typeof parsed.values.event === "string"
+          ? parsed.values.event
+          : undefined,
+    });
     return;
   }
 
   console.error(`Unknown command: ${String(command)}`);
   console.log(HELP);
   process.exitCode = 1;
+}
+
+async function runHooksCommand(args: string[]): Promise<void> {
+  const action = args[0];
+
+  if (action === "install") {
+    const result = await installClaudeCodeHooks();
+    console.log(`Installed Claude Code hooks in ${result.settingsPath}`);
+    return;
+  }
+
+  if (action === "uninstall") {
+    const result = await uninstallClaudeCodeHooks();
+    console.log(`Uninstalled Claude Code hooks from ${result.settingsPath}`);
+    return;
+  }
+
+  console.error("Usage: aspex hooks install|uninstall");
+  process.exitCode = 1;
+}
+
+async function runRelayCommand(options: {
+  configPath?: string;
+  event?: string;
+}): Promise<void> {
+  try {
+    if (options.event === undefined || options.event.trim() === "") {
+      return;
+    }
+
+    const cfg = await loadConfig({ configPath: options.configPath });
+
+    await runHookRelay({ event: options.event, hubPort: cfg.hubPort });
+  } catch (_error) {
+    return;
+  }
 }
 
 async function runHub(options: {

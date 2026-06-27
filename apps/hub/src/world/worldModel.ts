@@ -31,6 +31,29 @@ export class WorldModel {
     this.bus.emit("world:changed", { upserted: [derived], removed: [] });
   }
 
+  applyHeartbeat(signal: Signal): void {
+    const existing = this.store.get(signal.id);
+
+    if (existing === null) {
+      if (!canCreateHeartbeatItem(signal)) {
+        return;
+      }
+
+      this.applySignal(signal);
+      return;
+    }
+
+    const refreshed = this.derivers.deriveLiveness(
+      this.derivers.deriveAttention({
+        ...existing,
+        observedAt: new Date().toISOString(),
+      }),
+    );
+
+    this.store.upsert(refreshed);
+    this.bus.emit("world:changed", { upserted: [refreshed], removed: [] });
+  }
+
   updateItem(item: AttentionItem): void {
     this.store.upsert(item);
     this.bus.emit("world:changed", { upserted: [item], removed: [] });
@@ -88,4 +111,15 @@ function mergeSignal(
   }
 
   return merged;
+}
+
+function canCreateHeartbeatItem(signal: Signal): boolean {
+  return (
+    typeof signal.project === "string" &&
+    signal.project.trim().length > 0 &&
+    typeof signal.session === "string" &&
+    signal.session.trim().length > 0 &&
+    typeof signal.summary === "string" &&
+    signal.summary.trim().length > 0
+  );
 }

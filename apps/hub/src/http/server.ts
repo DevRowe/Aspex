@@ -67,7 +67,12 @@ export function buildApp(deps: ServerDeps): Hono {
       };
 
       assertSignal(signal);
-      deps.worldModel.applySignal(signal);
+
+      if (isClaudeCodeHeartbeat(signal)) {
+        deps.worldModel.applyHeartbeat(signal);
+      } else {
+        deps.worldModel.applySignal(signal);
+      }
 
       return c.json({ accepted: true }, 202);
     } catch (error) {
@@ -123,3 +128,14 @@ function validationMessage(error: unknown): string {
 
 const isRecord = (x: unknown): x is Record<string, unknown> =>
   typeof x === "object" && x !== null;
+
+function isClaudeCodeHeartbeat(signal: unknown): signal is {
+  source: "claude-code";
+  heartbeat: true;
+} {
+  return (
+    isRecord(signal) &&
+    signal.source === "claude-code" &&
+    signal.heartbeat === true
+  );
+}

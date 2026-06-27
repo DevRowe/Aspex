@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { ClaudeCodeAdapter } from "@aspex/adapter-claude-code";
 import { GithubAdapter } from "@aspex/adapter-github";
 import { MockAdapter } from "@aspex/adapter-mock";
 import { AdapterRegistry } from "./adapters/registry";
@@ -45,6 +46,8 @@ export function buildHub(cfg: AspexConfig) {
   );
 
   const registry = new AdapterRegistry(world, liveness);
+
+  registry.register(new ClaudeCodeAdapter());
 
   if (cfg.mock === true) {
     registry.register(new MockAdapter());
