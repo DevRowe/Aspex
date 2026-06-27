@@ -31,6 +31,11 @@ export class WorldModel {
     this.bus.emit("world:changed", { upserted: [derived], removed: [] });
   }
 
+  updateItem(item: AttentionItem): void {
+    this.store.upsert(item);
+    this.bus.emit("world:changed", { upserted: [item], removed: [] });
+  }
+
   snapshot(): AttentionItem[] {
     return this.store.getAll();
   }
