@@ -1,6 +1,7 @@
-import { formatLiveness, formatRelativeTime } from "../lib/format";
+import { formatLastSeen } from "../lib/format";
 import { useStore } from "../store";
 import type { AttentionItem } from "../types";
+import { LivenessChip } from "./LivenessChip";
 import { ReasonBadge } from "./ReasonBadge";
 
 interface ItemCardProps {
@@ -30,9 +31,11 @@ export function ItemCard({ item, muted = false }: ItemCardProps) {
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <ReasonBadge reason={item.reason} />
-        <span className="rounded border border-zinc-800 px-2 py-1 text-xs leading-none text-zinc-400">
-          {formatLiveness(item.liveness)}
-        </span>
+        <LivenessChip
+          state={item.state}
+          liveness={item.liveness}
+          observedAt={item.observedAt}
+        />
       </div>
 
       <h2
@@ -47,7 +50,7 @@ export function ItemCard({ item, muted = false }: ItemCardProps) {
       <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-sm text-zinc-400">
         <span className="break-words">{item.project}</span>
         {item.actor ? <span className="break-words">{item.actor}</span> : null}
-        <span>{formatRelativeTime(item.observedAt)}</span>
+        <span>{formatLastSeen(item.observedAt)}</span>
       </div>
 
       {topAction ? (

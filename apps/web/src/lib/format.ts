@@ -1,4 +1,4 @@
-import type { Liveness, Reason } from "@aspex/schema";
+import type { Liveness, Reason, State } from "@aspex/schema";
 
 export const reasonLabel = {
   blocked_on_human: "Blocked - needs you",
@@ -62,4 +62,22 @@ export function formatRelativeTime(
 
 export function formatLiveness(liveness: Liveness): string {
   return liveness;
+}
+
+export function formatState(state: State): string {
+  return state;
+}
+
+export function formatStateLiveness(state: State, liveness: Liveness): string {
+  const label = `${formatState(state)} - ${formatLiveness(liveness)}`;
+
+  if (liveness === "lost") {
+    return `${label} (unconfirmed)`;
+  }
+
+  return label;
+}
+
+export function formatLastSeen(observedAt: string, now?: number): string {
+  return `last seen ${formatRelativeTime(observedAt, now)}`;
 }

@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { formatRelativeTime, reasonAccent, reasonLabel } from "./format";
+import {
+  formatLastSeen,
+  formatRelativeTime,
+  formatStateLiveness,
+  reasonAccent,
+  reasonLabel,
+} from "./format";
 
 describe("format helpers", () => {
   test("maps reason labels used by the inbox", () => {
@@ -40,5 +46,21 @@ describe("format helpers", () => {
     expect(formatRelativeTime("2026-06-28T01:59:20.000Z", now)).toBe("40s ago");
     expect(formatRelativeTime("2026-06-28T01:15:00.000Z", now)).toBe("45m ago");
     expect(formatRelativeTime("2026-06-27T23:00:00.000Z", now)).toBe("3h ago");
+  });
+
+  test("formats state and liveness as an explicit composite", () => {
+    expect(formatStateLiveness("working", "stale")).toBe("working - stale");
+    expect(formatStateLiveness("done", "live")).toBe("done - live");
+    expect(formatStateLiveness("working", "lost")).toBe(
+      "working - lost (unconfirmed)",
+    );
+  });
+
+  test("formats last seen labels with relative time", () => {
+    const now = Date.parse("2026-06-28T02:00:00.000Z");
+
+    expect(formatLastSeen("2026-06-28T01:56:00.000Z", now)).toBe(
+      "last seen 4m ago",
+    );
   });
 });
