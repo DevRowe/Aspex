@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "vite --host localhost --port 5173",
     "build": "vite build",
-    "typecheck": "tsc --noEmit --target ESNext --module ESNext --moduleResolution bundler --jsx react-jsx --strict --noUncheckedIndexedAccess --esModuleInterop --skipLibCheck --types vite/client --types bun-types src/main.tsx src/App.tsx src/lib/hubClient.ts src/store.ts src/types.ts vite.config.ts tailwind.config.ts"
+    "typecheck": "tsc --noEmit --target ESNext --module ESNext --moduleResolution bundler --jsx react-jsx --strict --noUncheckedIndexedAccess --esModuleInterop --skipLibCheck --types vite/client --types bun-types src/main.tsx src/App.tsx src/components/AmbientList.tsx src/components/Inbox.tsx src/components/ItemCard.tsx src/components/ReasonBadge.tsx src/lib/format.ts src/lib/hubClient.ts src/store.ts src/types.ts vite.config.ts tailwind.config.ts"
   },
   "dependencies": {
     "@aspex/schema": "workspace:*",
