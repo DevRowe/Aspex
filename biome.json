@@ -8,6 +8,9 @@
     "indentStyle": "space",
     "indentWidth": 2
   },
+  "files": {
+    "ignore": ["apps/web/dist/**"]
+  },
   "javascript": {
     "formatter": {
       "quoteStyle": "double"
