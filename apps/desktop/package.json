@@ -1,0 +1,10 @@
+{
+  "name": "@aspex/desktop",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "typecheck": "bun -e \"void 0\""
+  }
+}
