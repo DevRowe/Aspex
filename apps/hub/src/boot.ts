@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { GithubAdapter } from "@aspex/adapter-github";
 import { MockAdapter } from "@aspex/adapter-mock";
 import { AdapterRegistry } from "./adapters/registry";
 import { Bus } from "./bus";
@@ -47,6 +48,16 @@ export function buildHub(cfg: AspexConfig) {
 
   if (cfg.mock === true) {
     registry.register(new MockAdapter());
+  }
+
+  if (cfg.github !== undefined) {
+    registry.register(
+      new GithubAdapter({
+        token: cfg.github.token,
+        allowlist: cfg.github.allowlist,
+        pollIntervalMs: cfg.pollIntervalMs,
+      }),
+    );
   }
 
   const app = buildApp({

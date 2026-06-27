@@ -1,0 +1,17 @@
+{
+  "name": "@aspex/adapter-github",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aspex/schema": "workspace:*",
+    "@octokit/rest": "^22.0.1"
+  },
+  "devDependencies": {
+    "bun-types": "latest",
+    "typescript": "^5.5.0"
+  }
+}
