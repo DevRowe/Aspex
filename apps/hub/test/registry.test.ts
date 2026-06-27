@@ -192,6 +192,54 @@ describe("AdapterRegistry", () => {
     db.close();
   });
 
+  test("dispatchAction routes demo Items to mock when no real source adapter is registered", async () => {
+    const { db, registry } = openRegistry();
+    const mock = new FakeAdapter("mock", [action()]);
+    const payload = { body: "demo approval" };
+
+    registry.register(mock);
+
+    await expect(
+      registry.dispatchAction("github:pr:o/r#1", "approve", payload),
+    ).resolves.toEqual({ ok: true, message: "mock:approve" });
+    expect(mock.runCalls).toEqual([
+      { itemId: "github:pr:o/r#1", actionId: "approve", payload },
+    ]);
+
+    db.close();
+  });
+
+  test("dispatchAction prefers a real source adapter over the demo mock fallback", async () => {
+    const { db, registry } = openRegistry();
+    const mock = new FakeAdapter("mock", [action()]);
+    const adapters = new Map(
+      routedSources.map(({ adapterId }) => [
+        adapterId,
+        new FakeAdapter(adapterId, [action()]),
+      ]),
+    );
+    const payload = { body: "real approval" };
+
+    registry.register(mock);
+
+    for (const adapter of adapters.values()) {
+      registry.register(adapter);
+    }
+
+    for (const { adapterId, itemId } of routedSources) {
+      await expect(
+        registry.dispatchAction(itemId, "approve", payload),
+      ).resolves.toEqual({ ok: true, message: `${adapterId}:approve` });
+      expect(adapters.get(adapterId)?.runCalls).toEqual([
+        { itemId, actionId: "approve", payload },
+      ]);
+    }
+
+    expect(mock.runCalls).toEqual([]);
+
+    db.close();
+  });
+
   test("actionMeta returns the action's confirmation requirement", () => {
     const { db, registry } = openRegistry();
     const github = new FakeAdapter("github", [

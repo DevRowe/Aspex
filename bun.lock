@@ -12,7 +12,11 @@
     },
     "apps/hub": {
       "name": "@aspex/hub",
+      "bin": {
+        "aspex": "src/cli.ts",
+      },
       "dependencies": {
+        "@aspex/adapter-mock": "workspace:*",
         "@aspex/schema": "workspace:*",
         "hono": "^4.12.27",
       },
@@ -20,11 +24,23 @@
         "bun-types": "latest",
       },
     },
+    "packages/adapter-mock": {
+      "name": "@aspex/adapter-mock",
+      "dependencies": {
+        "@aspex/schema": "workspace:*",
+      },
+      "devDependencies": {
+        "bun-types": "latest",
+        "typescript": "^5.5.0",
+      },
+    },
     "packages/schema": {
       "name": "@aspex/schema",
     },
   },
   "packages": {
+    "@aspex/adapter-mock": ["@aspex/adapter-mock@workspace:packages/adapter-mock"],
+
     "@aspex/hub": ["@aspex/hub@workspace:apps/hub"],
 
     "@aspex/schema": ["@aspex/schema@workspace:packages/schema"],

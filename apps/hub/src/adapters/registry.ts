@@ -54,7 +54,7 @@ export class AdapterRegistry {
       return null;
     }
 
-    return this.adapters.get(adapterId) ?? null;
+    return this.adapters.get(adapterId) ?? this.demoMockAdapter();
   }
 
   async dispatchAction(
@@ -123,6 +123,10 @@ export class AdapterRegistry {
 
   private hasAction(actions: Action[], actionId: string): boolean {
     return actions.some((action) => action.id === actionId);
+  }
+
+  private demoMockAdapter(): Adapter | null {
+    return this.adapters.get("mock") ?? null;
   }
 }
 

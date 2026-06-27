@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { MockAdapter } from "@aspex/adapter-mock";
 import { AdapterRegistry } from "./adapters/registry";
 import { Bus } from "./bus";
 import { type AspexConfig, resolvedLivenessConfig } from "./config";
@@ -43,6 +44,11 @@ export function buildHub(cfg: AspexConfig) {
   );
 
   const registry = new AdapterRegistry(world, liveness);
+
+  if (cfg.mock === true) {
+    registry.register(new MockAdapter());
+  }
+
   const app = buildApp({
     worldModel: world,
     bus,

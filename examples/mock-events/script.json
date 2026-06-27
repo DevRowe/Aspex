@@ -1,0 +1,218 @@
+[
+  {
+    "atMs": 0,
+    "signal": {
+      "id": "github:pr:brocorp/aspex#101",
+      "source": "github",
+      "project": "brocorp/aspex",
+      "actor": "reviewer-a",
+      "state": "needs_review",
+      "reason": "review_requested",
+      "attentionRequired": true,
+      "severity": "medium",
+      "summary": "Review requested on brocorp/aspex#101",
+      "evidence": [
+        {
+          "label": "Requested reviewer",
+          "text": "reviewer-a requested your review"
+        }
+      ],
+      "actions": [
+        {
+          "id": "approve",
+          "label": "Approve",
+          "risk": "safe",
+          "requiresConfirmation": false
+        },
+        {
+          "id": "comment",
+          "label": "Comment",
+          "risk": "safe",
+          "requiresConfirmation": false
+        }
+      ],
+      "deepLink": "https://github.com/brocorp/aspex/pull/101"
+    }
+  },
+  {
+    "atMs": 100,
+    "signal": {
+      "id": "github:pr:brocorp/aspex#102",
+      "source": "github",
+      "project": "brocorp/aspex",
+      "actor": "ci",
+      "state": "needs_review",
+      "reason": "failing_ci",
+      "attentionRequired": true,
+      "severity": "high",
+      "summary": "CI is failing on your PR brocorp/aspex#102",
+      "evidence": [
+        {
+          "label": "CI",
+          "text": "unit-tests failed"
+        },
+        {
+          "label": "Review requested",
+          "text": "Also has a review_requested hint, but should stay one higher-rung Item"
+        }
+      ],
+      "actions": [
+        {
+          "id": "rerun-ci",
+          "label": "Re-run CI",
+          "risk": "safe",
+          "requiresConfirmation": false
+        },
+        {
+          "id": "comment",
+          "label": "Comment",
+          "risk": "safe",
+          "requiresConfirmation": false
+        }
+      ],
+      "deepLink": "https://github.com/brocorp/aspex/pull/102"
+    }
+  },
+  {
+    "atMs": 200,
+    "signal": {
+      "id": "github:pr:brocorp/aspex#103",
+      "source": "github",
+      "project": "brocorp/aspex",
+      "actor": "maintainer",
+      "state": "done",
+      "reason": "awaiting_merge",
+      "attentionRequired": true,
+      "severity": "medium",
+      "summary": "brocorp/aspex#103 is approved and awaiting merge",
+      "evidence": [
+        {
+          "label": "Checks",
+          "text": "All checks passed"
+        }
+      ],
+      "actions": [
+        {
+          "id": "merge",
+          "label": "Merge",
+          "risk": "dangerous",
+          "requiresConfirmation": true
+        }
+      ],
+      "deepLink": "https://github.com/brocorp/aspex/pull/103"
+    }
+  },
+  {
+    "atMs": 300,
+    "signal": {
+      "id": "claude-code:session:blocked-demo",
+      "source": "claude-code",
+      "project": "brocorp/aspex",
+      "session": "blocked-demo",
+      "actor": "claude-code",
+      "state": "blocked",
+      "reason": "blocked_on_human",
+      "attentionRequired": true,
+      "severity": "high",
+      "summary": "Claude Code is blocked waiting for your answer",
+      "evidence": [
+        {
+          "label": "Prompt",
+          "text": "Choose a migration strategy before editing the store"
+        }
+      ],
+      "actions": [],
+      "deepLink": "aspex://terminal/claude-code/blocked-demo"
+    }
+  },
+  {
+    "atMs": 400,
+    "signal": {
+      "id": "claude-code:session:finishes-demo",
+      "source": "claude-code",
+      "project": "brocorp/aspex",
+      "session": "finishes-demo",
+      "actor": "claude-code",
+      "state": "working",
+      "reason": "ambient",
+      "attentionRequired": false,
+      "severity": "info",
+      "summary": "Claude Code is implementing a small refactor",
+      "evidence": [
+        {
+          "label": "Activity",
+          "text": "Editing tests"
+        }
+      ],
+      "actions": [],
+      "deepLink": "aspex://terminal/claude-code/finishes-demo"
+    }
+  },
+  {
+    "atMs": 650,
+    "signal": {
+      "id": "claude-code:session:finishes-demo",
+      "source": "claude-code",
+      "project": "brocorp/aspex",
+      "session": "finishes-demo",
+      "actor": "claude-code",
+      "state": "done",
+      "reason": "ambient",
+      "attentionRequired": false,
+      "severity": "info",
+      "summary": "Claude Code finished the refactor",
+      "evidence": [
+        {
+          "label": "Result",
+          "text": "Ready for the PR lifecycle"
+        }
+      ],
+      "actions": [],
+      "deepLink": "aspex://terminal/claude-code/finishes-demo"
+    }
+  },
+  {
+    "atMs": 800,
+    "signal": {
+      "id": "claude-code:session:liveness-demo",
+      "source": "claude-code",
+      "project": "brocorp/aspex",
+      "session": "liveness-demo",
+      "actor": "claude-code",
+      "state": "working",
+      "reason": "ambient",
+      "attentionRequired": false,
+      "severity": "info",
+      "summary": "Claude Code is working, then stops emitting heartbeats",
+      "evidence": [
+        {
+          "label": "Heartbeat",
+          "text": "This session intentionally goes quiet for the liveness demo"
+        }
+      ],
+      "actions": [],
+      "deepLink": "aspex://terminal/claude-code/liveness-demo"
+    }
+  },
+  {
+    "atMs": 900,
+    "signal": {
+      "id": "webhook:deploy/aspex-preview",
+      "source": "webhook",
+      "project": "brocorp/aspex",
+      "actor": "preview-bot",
+      "state": "working",
+      "reason": "ambient",
+      "attentionRequired": false,
+      "severity": "info",
+      "summary": "Preview deploy is building",
+      "evidence": [
+        {
+          "label": "Environment",
+          "text": "aspex-preview"
+        }
+      ],
+      "actions": []
+    }
+  }
+]
