@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { ClaudeCodeAdapter } from "@aspex/adapter-claude-code";
 import { GithubAdapter } from "@aspex/adapter-github";
 import { MockAdapter } from "@aspex/adapter-mock";
+import { NtfyNotifier } from "@aspex/adapter-ntfy";
 import { WebhookAdapter } from "@aspex/adapter-webhook";
 import { AdapterRegistry } from "./adapters/registry";
 import { Bus } from "./bus";
@@ -63,6 +64,10 @@ export function buildHub(cfg: AspexConfig) {
         pollIntervalMs: cfg.pollIntervalMs,
       }),
     );
+  }
+
+  if (cfg.ntfy !== undefined) {
+    new NtfyNotifier(cfg.ntfy, bus);
   }
 
   const app = buildApp({

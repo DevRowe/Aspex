@@ -19,6 +19,7 @@
         "@aspex/adapter-claude-code": "workspace:*",
         "@aspex/adapter-github": "workspace:*",
         "@aspex/adapter-mock": "workspace:*",
+        "@aspex/adapter-ntfy": "workspace:*",
         "@aspex/adapter-webhook": "workspace:*",
         "@aspex/schema": "workspace:*",
         "hono": "^4.12.27",
@@ -77,6 +78,16 @@
         "typescript": "^5.5.0",
       },
     },
+    "packages/adapter-ntfy": {
+      "name": "@aspex/adapter-ntfy",
+      "dependencies": {
+        "@aspex/schema": "workspace:*",
+      },
+      "devDependencies": {
+        "bun-types": "latest",
+        "typescript": "^5.5.0",
+      },
+    },
     "packages/adapter-webhook": {
       "name": "@aspex/adapter-webhook",
       "dependencies": {
@@ -99,6 +110,8 @@
     "@aspex/adapter-github": ["@aspex/adapter-github@workspace:packages/adapter-github"],
 
     "@aspex/adapter-mock": ["@aspex/adapter-mock@workspace:packages/adapter-mock"],
+
+    "@aspex/adapter-ntfy": ["@aspex/adapter-ntfy@workspace:packages/adapter-ntfy"],
 
     "@aspex/adapter-webhook": ["@aspex/adapter-webhook@workspace:packages/adapter-webhook"],
 
