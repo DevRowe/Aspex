@@ -1,0 +1,5 @@
+# github discovery is viewer-centric search, not repo enumeration
+
+The plan says "poll across all repos," which reads as enumerate-repositories-and-poll-each. Instead the github adapter discovers Items via GitHub's viewer-centric search endpoints — `review-requested:@me`, `author:@me`, `assignee:@me`, `mentions:@me` — and then fetches check-runs for the viewer's authored PRs. An optional small allowlist of extra repos/authors covers agent PRs opened under a **bot identity** (PRs the agent opens under the viewer's own account are already caught by `author:@me`).
+
+We chose this because it bounds work to "things that actually involve me" — which is precisely the product's "what needs me" framing — at a handful of API calls regardless of how many repositories exist, with no repo list to curate and miss. Repo enumeration was rejected (curation burden, rate cost that scales with repo count, silent gaps); polling all accessible repos was rejected (unbounded cost and surfaces noise — "everything glows" at the data layer). Recorded because the obvious-but-wrong "fix" is to add repo enumeration, which would reintroduce exactly these problems.

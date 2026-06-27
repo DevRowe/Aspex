@@ -1,0 +1,5 @@
+# Phase 0 Hub is a single process: in-proc bus, SSE + REST, SQLite authoritative
+
+The plan lists NATS as the internal bus and Socket.IO (or Centrifugo) for client push. For a single-user local-first tool that is over-built. **Phase 0 Hub is one Node process:** adapters and the attention engine fan out through an in-process typed emitter (no NATS); the client receives one-way world-model diffs over SSE and issues control via a small REST API (no bidirectional Socket.IO); SQLite is the authoritative Item store, reloaded on restart and then reconciled by re-polling. NATS / Socket.IO / Centrifugo are deferred until a genuine multi-process or multi-client need appears.
+
+We chose this to delete an entire infrastructure chunk a less-capable implementer would otherwise have to stand up, operate, and debug. The push path is one-way (the world-model changes, the client re-renders) and control is request/response, so SSE + REST is sufficient; nothing in Phase 0 needs cross-process messaging. The cost is a later migration if/when multiple processes or remote clients arrive — but the adapter and engine interfaces stay the same, so that swap is contained.
