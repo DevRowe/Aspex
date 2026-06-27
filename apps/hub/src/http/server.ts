@@ -1,3 +1,4 @@
+import { normalizeWebhookBody } from "@aspex/adapter-webhook";
 import type { ActionResult, Source } from "@aspex/schema";
 import { assertSignal } from "@aspex/schema";
 import { Hono } from "hono";
@@ -58,12 +59,16 @@ export function buildApp(deps: ServerDeps): Hono {
 
   app.post("/signals/:source", async (c) => {
     try {
-      const body = await c.req.json();
+      const source = c.req.param("source") as Source;
+      const rawBody = await c.req.json();
+      const body =
+        source === "webhook" ? normalizeWebhookBody(rawBody) : rawBody;
+
       assertSignal(body);
 
       const signal = {
         ...body,
-        source: c.req.param("source") as Source,
+        source,
       };
 
       assertSignal(signal);

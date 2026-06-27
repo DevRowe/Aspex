@@ -19,6 +19,7 @@
         "@aspex/adapter-claude-code": "workspace:*",
         "@aspex/adapter-github": "workspace:*",
         "@aspex/adapter-mock": "workspace:*",
+        "@aspex/adapter-webhook": "workspace:*",
         "@aspex/schema": "workspace:*",
         "hono": "^4.12.27",
       },
@@ -76,6 +77,16 @@
         "typescript": "^5.5.0",
       },
     },
+    "packages/adapter-webhook": {
+      "name": "@aspex/adapter-webhook",
+      "dependencies": {
+        "@aspex/schema": "workspace:*",
+      },
+      "devDependencies": {
+        "bun-types": "latest",
+        "typescript": "^5.5.0",
+      },
+    },
     "packages/schema": {
       "name": "@aspex/schema",
     },
@@ -88,6 +99,8 @@
     "@aspex/adapter-github": ["@aspex/adapter-github@workspace:packages/adapter-github"],
 
     "@aspex/adapter-mock": ["@aspex/adapter-mock@workspace:packages/adapter-mock"],
+
+    "@aspex/adapter-webhook": ["@aspex/adapter-webhook@workspace:packages/adapter-webhook"],
 
     "@aspex/hub": ["@aspex/hub@workspace:apps/hub"],
 
