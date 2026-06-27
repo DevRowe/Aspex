@@ -12,6 +12,10 @@ export class Bus {
     this.emitter.on(k, fn);
   }
 
+  off<K extends keyof HubEvents>(k: K, fn: (e: HubEvents[K]) => void): void {
+    this.emitter.off(k, fn);
+  }
+
   emit<K extends keyof HubEvents>(k: K, e: HubEvents[K]): void {
     this.emitter.emit(k, e);
   }
