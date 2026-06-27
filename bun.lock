@@ -12,6 +12,9 @@
     },
     "apps/hub": {
       "name": "@aspex/hub",
+      "dependencies": {
+        "@aspex/schema": "workspace:*",
+      },
       "devDependencies": {
         "bun-types": "latest",
       },

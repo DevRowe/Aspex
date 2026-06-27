@@ -6,5 +6,8 @@
     "typecheck": "tsc --noEmit",
     "dev": "bun run src/index.ts"
   },
+  "dependencies": {
+    "@aspex/schema": "workspace:*"
+  },
   "devDependencies": { "bun-types": "latest" }
 }
