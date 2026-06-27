@@ -2,6 +2,9 @@
   "name": "@aspex/hub",
   "private": true,
   "type": "module",
+  "bin": {
+    "aspex": "src/cli.ts"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "dev": "bun run src/index.ts"
