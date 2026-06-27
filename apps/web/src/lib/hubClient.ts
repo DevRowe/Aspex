@@ -1,4 +1,5 @@
 import { useStore } from "../store";
+import type { ActionResult } from "../types";
 import type { RankedState } from "../types";
 
 const HUB = import.meta.env.VITE_HUB_URL ?? "http://127.0.0.1:4317";
@@ -23,10 +24,23 @@ export async function runAction(
   itemId: string,
   actionId: string,
   confirmed = false,
-): Promise<Response> {
-  return fetch(`${HUB}/actions/${encodeURIComponent(itemId)}/${actionId}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ confirmed }),
-  });
+): Promise<ActionResult> {
+  const response = await fetch(
+    `${HUB}/actions/${encodeURIComponent(itemId)}/${encodeURIComponent(
+      actionId,
+    )}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ confirmed }),
+    },
+  );
+  const body = (await response
+    .json()
+    .catch(() => ({}))) as Partial<ActionResult>;
+
+  return {
+    ok: response.ok && body.ok !== false,
+    message: body.message ?? response.statusText,
+  };
 }

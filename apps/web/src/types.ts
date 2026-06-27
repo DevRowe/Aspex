@@ -1,6 +1,6 @@
-import type { AttentionItem } from "@aspex/schema";
+import type { Action, ActionResult, AttentionItem } from "@aspex/schema";
 
-export type { AttentionItem };
+export type { Action, ActionResult, AttentionItem };
 
 export interface RankedState {
   needsMe: AttentionItem[];
