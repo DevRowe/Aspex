@@ -4,9 +4,13 @@ import { connect } from "./lib/hubClient";
 
 export function App() {
   useEffect(() => {
-    const stream = connect();
+    let stream: EventSource | undefined;
+    void connect().then((nextStream) => {
+      stream = nextStream;
+    });
+
     return () => {
-      stream.close();
+      stream?.close();
     };
   }, []);
 

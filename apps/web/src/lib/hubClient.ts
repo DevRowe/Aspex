@@ -2,10 +2,20 @@ import { useStore } from "../store";
 import type { ActionResult } from "../types";
 import type { RankedState } from "../types";
 
-const HUB = import.meta.env.VITE_HUB_URL ?? "http://127.0.0.1:4317";
+const DEFAULT_HUB_URL = "http://127.0.0.1:4317";
+let hubUrl: Promise<string> | undefined;
 
-export function connect(): EventSource {
-  const stream = new EventSource(`${HUB}/stream`);
+interface TauriGlobals {
+  __TAURI__?: {
+    core?: {
+      invoke?: <T>(command: string) => Promise<T>;
+    };
+  };
+}
+
+export async function connect(): Promise<EventSource> {
+  const hub = await getHubUrl();
+  const stream = new EventSource(`${hub}/stream`);
 
   stream.addEventListener("state", (event) => {
     const state = JSON.parse(
@@ -25,8 +35,9 @@ export async function runAction(
   actionId: string,
   confirmed = false,
 ): Promise<ActionResult> {
+  const hub = await getHubUrl();
   const response = await fetch(
-    `${HUB}/actions/${encodeURIComponent(itemId)}/${encodeURIComponent(
+    `${hub}/actions/${encodeURIComponent(itemId)}/${encodeURIComponent(
       actionId,
     )}`,
     {
@@ -43,4 +54,25 @@ export async function runAction(
     ok: response.ok && body.ok !== false,
     message: body.message ?? response.statusText,
   };
+}
+
+async function getHubUrl(): Promise<string> {
+  hubUrl ??= resolveHubUrl();
+  return hubUrl;
+}
+
+async function resolveHubUrl(): Promise<string> {
+  const configured = import.meta.env.VITE_HUB_URL;
+
+  if (typeof configured === "string" && configured.trim() !== "") {
+    return configured;
+  }
+
+  const invoke = (window as TauriGlobals).__TAURI__?.core?.invoke;
+
+  if (typeof invoke === "function") {
+    return invoke<string>("hub_url");
+  }
+
+  return DEFAULT_HUB_URL;
 }
