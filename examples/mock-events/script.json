@@ -21,8 +21,8 @@
         {
           "id": "approve",
           "label": "Approve",
-          "risk": "safe",
-          "requiresConfirmation": false
+          "risk": "medium",
+          "requiresConfirmation": true
         },
         {
           "id": "comment",
@@ -80,7 +80,7 @@
       "source": "github",
       "project": "brocorp/aspex",
       "actor": "maintainer",
-      "state": "done",
+      "state": "needs_review",
       "reason": "awaiting_merge",
       "attentionRequired": true,
       "severity": "medium",

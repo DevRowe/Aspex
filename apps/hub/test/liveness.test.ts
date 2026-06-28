@@ -77,13 +77,14 @@ describe("livenessAt", () => {
     expect(livenessAt(source, baseNow, cfg)).toBe("live");
   });
 
-  test("error is not terminal and can decay", () => {
+  test("error is terminal and stays live even when staleAfter is far in the past", () => {
     const source = item({
       state: "error",
+      liveness: "lost",
       staleAfter: iso(baseNow - cfg.lostAfterMs),
     });
 
-    expect(livenessAt(source, baseNow, cfg)).toBe("lost");
+    expect(livenessAt(source, baseNow, cfg)).toBe("live");
   });
 });
 

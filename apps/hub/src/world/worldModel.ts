@@ -39,7 +39,12 @@ export class WorldModel {
         return;
       }
 
-      this.applySignal(signal);
+      // Strip the transient transport-only `heartbeat` hint so it never lands
+      // in a persisted Item (it is not part of the schema).
+      const { heartbeat: _heartbeat, ...clean } = signal as Signal & {
+        heartbeat?: unknown;
+      };
+      this.applySignal(clean);
       return;
     }
 
