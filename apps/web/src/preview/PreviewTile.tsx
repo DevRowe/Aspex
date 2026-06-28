@@ -1,5 +1,10 @@
 import type { Preview, PreviewSpec } from "@aspex/schema";
 import { useEffect, useRef, useState } from "react";
+import {
+  TRUSTED_PREVIEW_ALLOW,
+  TRUSTED_PREVIEW_REFERRER_POLICY,
+  TRUSTED_PREVIEW_SANDBOX,
+} from "./iframeSandbox";
 import { usePreviewStore } from "./usePreviews";
 
 interface PreviewTileProps {
@@ -125,9 +130,9 @@ export function PreviewTile({ preview, spec }: PreviewTileProps) {
           <iframe
             title={`Preview: ${name}`}
             src={preview.url}
-            sandbox="allow-scripts allow-forms allow-same-origin"
-            referrerPolicy="no-referrer"
-            allow=""
+            sandbox={TRUSTED_PREVIEW_SANDBOX}
+            referrerPolicy={TRUSTED_PREVIEW_REFERRER_POLICY}
+            allow={TRUSTED_PREVIEW_ALLOW}
             className="h-[22rem] w-full bg-white"
           />
         ) : null}

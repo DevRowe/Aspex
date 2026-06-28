@@ -25,6 +25,10 @@ import { WorldModel } from "./world/worldModel";
 
 export const VERSION = "0.0.0";
 
+// How often the Hub reaps idle-expired previews. The broker also sweeps lazily on
+// boot/get/list; this ticker guarantees an otherwise-idle Hub still auto-reaps.
+const PREVIEW_SWEEP_INTERVAL_MS = 15_000;
+
 export interface BuildHubOptions {
   previewEngineFactory?: (kind: "docker" | "mock") => PreviewEngine;
   log?: Pick<Console, "warn">;
@@ -137,6 +141,7 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
     previews: { enabled: false },
   });
   let previewBroker: ReturnType<typeof createPreviewBroker> | undefined;
+  let previewSweep: ReturnType<typeof setInterval> | undefined;
   const log = options.log ?? console;
 
   return {
@@ -152,6 +157,13 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
         log,
       });
       previewBroker = previewDeps?.broker;
+      if (previewBroker !== undefined) {
+        const broker = previewBroker;
+        previewSweep = setInterval(() => {
+          void broker.sweep();
+        }, PREVIEW_SWEEP_INTERVAL_MS);
+        previewSweep.unref?.();
+      }
       app = buildApp({
         ...appDeps,
         previews:
@@ -167,6 +179,10 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
       liveness.start();
     },
     stop: async () => {
+      if (previewSweep !== undefined) {
+        clearInterval(previewSweep);
+        previewSweep = undefined;
+      }
       liveness.stop();
       await registry.stopAll();
       await previewBroker?.shutdown();

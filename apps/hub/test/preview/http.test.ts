@@ -364,6 +364,8 @@ class FakeBroker implements PreviewBroker {
     return [...this.previews.values()];
   }
 
+  async sweep(): Promise<void> {}
+
   async shutdown(): Promise<void> {}
 
   onChange(cb: (p: Preview) => void): () => void {

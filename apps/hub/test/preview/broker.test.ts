@@ -191,6 +191,34 @@ describe("createPreviewBroker", () => {
     expect(next).toMatchObject({ state: "booting" });
   });
 
+  test("sweep() reaps expired ready previews on its own", async () => {
+    let nowMs = Date.parse("2026-06-28T00:00:00.000Z");
+    const engine = new FakeEngine();
+    const broker = createPreviewBroker({
+      engine,
+      lookupSpec: (specId) =>
+        specId === baseSpec.id
+          ? { ...baseSpec, limits: { idleTtlSec: 5 } }
+          : undefined,
+      config: { maxConcurrent: 1, defaultIdleTtlSec: 30 },
+      now: () => nowMs,
+    });
+
+    const booting = await broker.boot("app");
+    await waitForPreview(
+      broker,
+      booting.previewId,
+      (preview) => preview.state === "ready",
+    );
+
+    nowMs = Date.parse("2026-06-28T00:00:06.000Z");
+    await broker.sweep();
+
+    // The reap came from sweep() alone, asserted before any lazy get/list sweep.
+    expect(engine.stops).toBe(1);
+    expect(broker.get(booting.previewId)?.state).toBe("stopped");
+  });
+
   test("stop during boot keeps the preview stopped and reaps the eventual handle", async () => {
     const engine = new DeferredEngine();
     const broker = createPreviewBroker({

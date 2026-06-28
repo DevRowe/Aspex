@@ -11,6 +11,9 @@ export interface PreviewBroker {
   stop(previewId: string): Promise<void>;
   get(previewId: string): Preview | undefined;
   list(): Preview[];
+  /** Reap previews past their idle TTL. Driven by a periodic ticker (boot.ts) so
+   *  an idle Hub auto-reaps; also runs lazily on boot/get/list. */
+  sweep(): Promise<void>;
   shutdown(): Promise<void>;
   onChange(cb: (p: Preview) => void): () => void;
 }
@@ -72,6 +75,10 @@ export function createPreviewBroker(args: {
 
     async stop(previewId: string): Promise<void> {
       await stopPreview(previewId);
+    },
+
+    async sweep(): Promise<void> {
+      await sweepExpired();
     },
 
     get(previewId: string): Preview | undefined {
