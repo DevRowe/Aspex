@@ -1,0 +1,7 @@
+# The voice loop is brokered by the Hub; STT/TTS are services, not Adapters
+
+Phase 1 adds a push-to-talk voice loop (capture → STT → intent → action → read-back). We make the **Hub the broker**: the web client captures a discrete utterance and POSTs the audio to the Hub; the Hub calls the STT service (Parakeet), parses the transcript against the fixed command grammar, maps it to an existing Action, executes it through the Phase 0 dispatch, and returns a read-back (text + TTS audio from Piper). The browser stays thin — capture, playback, and the push-to-talk UI only. This new Hub subsystem is the **voice gateway**.
+
+We chose this over client-direct (browser calling Parakeet/Piper itself and POSTing to `/actions`) because: it keeps the Hub the single brain (ADR-0005); the **safe-grammar rule — never let a fuzzy parse trigger a `dangerous` action — lives server-side, next to action execution, where it cannot be bypassed**; voice/endpoint config lives in one place; the browser only needs to reach localhost (no CORS or tailnet-from-webview access to the GPU box); and the whole loop is testable headlessly by POSTing audio fixtures. The cost is one extra localhost hop for audio, negligible against Parakeet inference time.
+
+Parakeet (STT) and Piper (TTS) are **not Sources** — they never produce AttentionItems — so they are **not Adapters**. They are external services the voice gateway calls. The Adapter interface (ADR-0002, card 02/08) is reserved for Sources; do not shoehorn STT/TTS into it.

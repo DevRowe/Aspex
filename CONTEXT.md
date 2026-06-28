@@ -71,3 +71,45 @@ _Avoid_: stub, placeholder, future adapter.
 **Hook-relay**:
 The small bundled command (`aspex hook-relay`) that Claude Code's hooks invoke; it reads Claude Code's stdin JSON and POSTs it to the Hub as a Signal. Installed into user-level `settings.json` by `aspex hooks install`. Cross-platform stand-in for raw curl.
 _Avoid_: webhook, shim, forwarder.
+
+### Voice (Phase 1)
+
+**Voice gateway**:
+The Hub subsystem that brokers the whole push-to-talk loop: it receives an Utterance from the client, calls the STT service to transcribe it, parses the transcript against the Command grammar, dispatches the resulting Action, and returns a Read-back. Not an Adapter — it consumes the STT/TTS services and drives the existing action dispatch. See ADR-0010.
+_Avoid_: voice adapter, speech adapter, voice pipeline (informal only).
+
+**Utterance**:
+One discrete audio capture produced by a single push-to-talk press-and-release — the unit the client sends to the Hub for transcription. Batch-transcribed whole (not streamed). Distinct from a Signal: an Utterance carries a spoken command, never a world-model observation.
+_Avoid_: recording, clip, audio event.
+
+**Push-to-talk** (PTT):
+The interaction where you hold a control (an on-screen button, or the configurable hold-key) to capture one Utterance and release to send it — no open mic, no wake word. On flat the trigger is the button/key; on a headset (Phase 2) it becomes gaze-dwell + hold.
+_Avoid_: hold-to-talk, hotword, wake word.
+
+**Voice context**:
+The small snapshot the client attaches to an Utterance so the Hub can resolve deictic and ordinal references — the current `selectedId` plus the ordered needs-me ids as shown. It is how the Hub knows what "this", "selected", or "the top one" mean while selection itself stays client-side.
+_Avoid_: focus state, cursor, session context.
+
+**Read-back**:
+The Hub's spoken-and-written confirmation returned after handling an Utterance — a concise text line plus TTS audio (Piper) describing what happened or what it heard. The voice counterpart of an on-screen toast.
+_Avoid_: response, reply, TTS output.
+
+**Client directive**:
+An optional UI instruction the Hub returns alongside a Read-back when a command changes client state — e.g. "select Item X", "next". The client applies it; the Hub never mutates client selection directly.
+_Avoid_: command, event, push.
+
+**Command grammar**:
+The fixed, closed vocabulary of spoken commands Phase 1 understands — navigation/query verbs plus action verbs that resolve against the selected Item's real Actions. Closed by design: anything outside it is a no-match and never triggers an Action (free-form intent is Phase 3). The canonical list lives in `docs/voice-grammar.md`. See ADR-0011.
+_Avoid_: intent model, NLU, command set.
+
+**Confirm-phrase**:
+The separate, explicit follow-up utterance ("confirm merge") required to fire an armed `requiresConfirmation` Action. The first utterance only arms; the Confirm-phrase fires. The spoken counterpart of card 13's typed ConfirmGate; one utterance can never both request and confirm.
+_Avoid_: confirmation, verification, second factor.
+
+**Dictation mode**:
+The bounded state, entered by a dictation verb (`comment`, `request changes`), in which the next whole Utterance is captured verbatim as free-text body rather than parsed as a command. Always ends with a read-back-before-post confirm. Distinct from the Command grammar — it is the one place free text is accepted in Phase 1. See ADR-0012.
+_Avoid_: free-form mode, transcription mode, NL input.
+
+**Voice service**:
+An external STT or TTS process the voice gateway calls over the generic HTTP contract (`/transcribe`, `/speak`) — Parakeet, Piper, a CPU fallback, or the mock. Located by config URL, pluggable, not an Adapter (it produces no Items). See ADR-0013.
+_Avoid_: STT adapter, TTS adapter, speech engine.

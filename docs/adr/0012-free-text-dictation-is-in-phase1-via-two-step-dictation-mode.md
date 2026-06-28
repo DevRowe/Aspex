@@ -1,0 +1,9 @@
+# Free-text dictation is in Phase 1, but only via a two-step dictation mode with mandatory read-back-before-post
+
+The source plan defers free-form natural language to Phase 3 ("fixed command grammar first"). We **partially override that**: Phase 1 includes **free-text dictation for review content** (comment bodies and a request-changes verdict), because dictating a verdict is the difference between a useful review-by-voice loop and a navigation toy. It does **not** open the command grammar to free-form intent — that stays Phase 3 (ADR-0011). Dictation is a bounded, explicitly-entered mode.
+
+The flow is **two-step**: a verb (`comment` / `request changes`) *arms* dictation mode; the **next whole utterance** is captured verbatim as the body (no verb/body boundary parsing); the Hub **reads the transcript back** and waits for an explicit "post it" before sending. **Dictated free-text always requires read-back-before-post, even though `comment` is a `safe` action by risk tier** — the content is STT-fallible and lands publicly on a PR, so it carries its own confirm requirement independent of the action's risk. This is a new rule: *dictated content elevates the confirm requirement*.
+
+Because "reject and say …" needs a target the github adapter does not yet have, Phase 1 **adds a `request_changes` action** to `adapter-github` (a REST review with `event: REQUEST_CHANGES` + body), symmetric with `approve`.
+
+We rejected a single-utterance tail slot ("comment looks good") — brittle boundary detection, and a garbled transcript could post unheard — and rejected deferring all dictation to Phase 3 (the plan's grammar explicitly lists "reject and say", and the user wants the capability now). Consequence: a Phase 0 *adapter* gains one action, and the voice gateway carries a dictation-mode state alongside the pending-confirm state (both in the voice session state machine).

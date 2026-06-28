@@ -1,0 +1,5 @@
+# Phase 1 is flat-voice-only; the WebXR mic-capture verification is a separate hardware-gated Phase 2 entry gate
+
+The source plan placed the "verify mic capture inside a live `immersive-ar` WebXR session on the real target" check **inside Phase 1** ("before any spatial work"). We split it out. **Phase 1 ships push-to-talk voice on the flat desktop/DeX cockpit only** — it needs no headset and is fully buildable today. The WebXR mic-capture spike becomes a standing, **hardware-gated "Phase 2 entry gate"**: it blocks Phase 2 (spatial Labs), not any Phase 1 card.
+
+We rejected keeping the gate in Phase 1 (it couples Phase 1's completion to hardware we do not yet have — the Aura grey-import is pending and the HoloLens 2 is a test rig only), and rejected running it first (same hardware blocker, and it stalls a phase that delivers real daily value without a headset). Consequence: Phase 1 is a clean, chunkable unit exactly like Phase 0; the gate lives in the later-phases outline and the standing action items, and must pass before Phase 2 spatial work begins.

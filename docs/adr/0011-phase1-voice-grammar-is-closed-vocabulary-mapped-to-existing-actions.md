@@ -1,0 +1,11 @@
+# Phase 1 voice grammar is a closed vocabulary mapped to existing Actions; the safe-grammar rule is enforced in the Hub
+
+Phase 1 voice uses a **fixed, closed-vocabulary command grammar** — a curated set of spoken verbs, not arbitrary natural language (free-form intent stays Phase 3). The grammar covers navigation/query (`what needs me`, `focus ‹project›`, `next`/`previous`, `read it`, `open it`) and actions on the selected Item (`approve`, `re-run`, `merge`, plus the dictation verbs in ADR-0012). A spoken action verb is **resolved against the selected Item's real `actions` array**, which the Hub knows — voice can never invoke an action that does not exist or is not offered on that Item.
+
+Several rules are load-bearing and enforced **server-side in the voice gateway** (ADR-0010), not in the browser:
+
+- **No-match never acts.** A transcript that does not match the grammar — or is below the confidence threshold, or names an absent referent — is rejected with a read-back and produces **no** action. A fuzzy parse must never be coerced into a command.
+- **Confirm-phrase is keyed off `requiresConfirmation`.** A `dangerous` action (e.g. `merge`) only *arms* on the first utterance; a **separate** confirm-phrase utterance ("confirm merge") fires it. One utterance can never both request and confirm. The pending confirm is bound to `(itemId, actionId)` and expires (timeout / any other command). This is the voice counterpart of card 13's typed `ConfirmGate` and reuses card 07's `requiresConfirmation` → 409 contract.
+- **Referents come from client voice-context, not Hub-tracked state.** Selection lives in the client (card 12); the client attaches a voice-context (`selectedId` + ordered needs-me ids) to each utterance so the Hub can resolve "this", "selected", "the top one". The Hub returns a read-back plus an optional client directive (e.g. "select id X"); it never mutates client selection directly.
+
+We chose closed-vocabulary over a more permissive parser because the cost of a mis-parse here is real (a wrong action on a PR), the plan draws the fixed-vs-free-form line at Phase 3, and keeping the safety rules in one server-side place makes them auditable and unbypassable. Consequence: the canonical grammar lives in `docs/voice-grammar.md` and the parser is a pure, heavily-tested function.

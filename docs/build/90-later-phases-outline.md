@@ -4,25 +4,27 @@ These phases are **outlined, not buildable yet**. Most are Labs/experimental wit
 
 ---
 
-## Phase 1 — Push-to-talk voice on flat
-**Goal:** speak to the cockpit; gaze/selection as pointer, voice as verb, hold-to-talk (no open mic, no wake word).
+## Phase 1 — Push-to-talk voice on flat — ✅ CHUNKED (cards 22–34)
 
-Locked-in from the plan:
-- **STT:** Parakeet (local, GPU on the Ollama box), batch transcription of discrete utterances. Fallback: whisper.cpp / faster-whisper (CPU).
-- **TTS:** Piper (local neural) for read-backs. Web Speech Synthesis only as a throwaway first cut.
-- **Intent:** fixed command grammar first (free-form is Phase 3). Safe grammar — never let a fuzzy parse merge/deploy/delete.
-- **Confirm:** two-step confirm-phrase for `dangerous` actions (the voice version of card 13's typed confirm).
+**No longer an outline.** Phase 1 has been grilled and chunked into task cards: see `22-phase-1-index.md` (index + canonical voice contract + command grammar) and cards `23`–`34`. The decisions are recorded in ADR-0009…0013 and the glossary in `../../CONTEXT.md` (the *Voice (Phase 1)* section).
 
-Must-verify early (the plan's flag): **mic capture inside an active `immersive-ar` WebXR session is unreliable on some runtimes — test on the real HoloLens 2 / Android XR target before any spatial work.** Web Speech API is cloud in Chrome — not the foundation.
+What got resolved from the old open questions: Hub-brokered voice gateway (ADR-0010); browser `getUserMedia` capture; PTT = on-screen hold-button + hold-`Space`; referents via client voice-context; closed fixed grammar mapped to existing Actions with a confidence gate (ADR-0011); **bounded free-text dictation IS in Phase 1** via two-step read-back-before-post + a new `request_changes` github action (ADR-0012); generic HTTP STT/TTS contract with ordered fallback + reference Python server + mock, Piper read-back, Web Speech dev-only (ADR-0013).
 
-Open questions to grill before chunking: exact command grammar; how gaze/selection maps to "the selected Item" on flat (no headset yet); push-to-talk trigger on desktop/DeX (key? button?); where Parakeet runs vs the Hub; latency budget.
+**Scope note (ADR-0009): Phase 1 is flat voice only.** The WebXR mic-capture verification is *not* a Phase 1 card — it is the **Phase 2 entry gate** below.
+
+---
+
+## Phase 2 entry gate — WebXR mic-capture verification (hardware-gated)
+**Must pass before any Phase 2 spatial work begins (ADR-0009).** The plan's flag: **mic capture inside an active `immersive-ar` WebXR session is unreliable on some runtimes — verify it on the real HoloLens 2 / Android XR target.** Web Speech API is cloud in Chrome — not the foundation; this gate verifies the local `getUserMedia` path (the same one Phase 1's flat capture uses) survives inside an immersive session.
+
+This is a small de-risking spike, **blocked on hardware** (the Aura grey-import is pending; HoloLens 2 is a test rig). It runs the moment a target is in hand; it does **not** block any Phase 1 card. Outcome decides whether Phase 2 push-to-talk reuses the flat capture path as-is or needs a workaround (e.g. capture outside the session, or a native bridge).
 
 ---
 
 ## Phase 2 — Labs: Spatial shell (experimental)
-**Goal:** port the flat needs-me panels into a calm WebXR arc.
+**Goal:** port the flat needs-me panels into a calm WebXR arc. **Gated by the Phase 2 entry gate above.**
 - Stack: `@react-three/xr` + `@react-three/uikit` + drei + three.js (all MIT). One r3f tree renders flat (`<Canvas>`/DOM) and immersive.
-- Interaction: gaze-dwell + push-to-talk. HoloLens 2 now (test rig), Aura later.
+- Interaction: gaze-dwell + push-to-talk (the Phase 1 voice gateway is reused; gaze-dwell replaces the flat PTT trigger). HoloLens 2 now (test rig), Aura later.
 - **Benchmark gate:** can you hold ~10–20 live uikit panels at stable framerate on HoloLens 2? If not → texture-snapshot panels, or evaluate Babylon.js (Apache fallback).
 
 ### Labs: Preview Deck (parallel, non-blocking)
