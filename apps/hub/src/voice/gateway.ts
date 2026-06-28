@@ -1,15 +1,20 @@
-import type {
-  Action,
-  ActionResult,
-  ClientDirective,
-  Intent,
-  ItemId,
-  NoMatchReason,
-  VoiceContext,
-  VoiceResult,
-  VoiceSession,
+import {
+  type Action,
+  type ActionResult,
+  type ClientDirective,
+  type Intent,
+  type IntentCandidate,
+  type IntentSource,
+  type ItemId,
+  type NoMatchReason,
+  type Transcript,
+  type VoiceContext,
+  type VoiceResult,
+  type VoiceSession,
+  isIntentResult,
 } from "@aspex/schema";
 import { parse } from "./grammar";
+import type { IntentService } from "./intentService";
 import { type Effect, reduce } from "./session";
 import type { SttClient } from "./sttClient";
 import type { TtsClient } from "./ttsClient";
@@ -33,6 +38,9 @@ export interface GatewayDeps {
   confidenceThreshold: number;
   confirmTtlMs: number;
   now?: () => number;
+  intentService?: IntentService;
+  snapshotCandidates?: () => IntentCandidate[];
+  elevateFreeformConfirm?: boolean;
 }
 
 interface EffectResult {
@@ -51,23 +59,9 @@ export class VoiceGateway {
     mime: string,
     context: VoiceContext,
   ): Promise<VoiceGatewayResult> {
-    let intent: Intent;
-
+    let transcript: Transcript;
     try {
-      const transcript = await this.deps.stt.transcribe(audio, mime);
-      const selectedActions =
-        context.selectedId === undefined
-          ? []
-          : this.deps.getSelectedActions(context.selectedId);
-
-      intent = parse({
-        transcript,
-        context,
-        session: this.session,
-        selectedActions,
-        resolveProject: this.deps.resolveProject,
-        confidenceThreshold: this.deps.confidenceThreshold,
-      });
+      transcript = await this.deps.stt.transcribe(audio, mime);
     } catch {
       return this.withAudio({
         ok: false,
@@ -76,73 +70,138 @@ export class VoiceGateway {
       });
     }
 
+    return this.runPipeline(transcript, context);
+  }
+
+  async handleText(
+    text: string,
+    context: VoiceContext,
+  ): Promise<VoiceGatewayResult> {
+    return this.runPipeline({ text, confidence: 1 }, context);
+  }
+
+  private async runPipeline(
+    transcript: Transcript,
+    context: VoiceContext,
+  ): Promise<VoiceGatewayResult> {
+    let provenance: IntentSource = "grammar";
+    const selectedActions =
+      context.selectedId === undefined
+        ? []
+        : this.deps.getSelectedActions(context.selectedId);
+
+    let intent = parse({
+      transcript,
+      context,
+      session: this.session,
+      selectedActions,
+      resolveProject: this.deps.resolveProject,
+      confidenceThreshold: this.deps.confidenceThreshold,
+    });
+
+    if (
+      intent.kind === "no_match" &&
+      intent.reason === "unknown_command" &&
+      this.deps.intentService !== undefined &&
+      this.deps.snapshotCandidates !== undefined
+    ) {
+      const result = await this.deps.intentService.resolve({
+        text: transcript.text,
+        context,
+        candidates: this.deps.snapshotCandidates(),
+      });
+      intent = isIntentResult(result)
+        ? result.intent
+        : freeformNoMatch(transcript.text);
+      provenance = "freeform";
+    }
+
     const { next, effect } = reduce(this.session, intent, {
       now: this.deps.now?.() ?? Date.now(),
       confirmTtlMs: this.deps.confirmTtlMs,
       requiresConfirmation: (itemId, actionId) =>
-        this.actionFor(itemId, actionId)?.requiresConfirmation === true,
+        this.actionFor(itemId, actionId)?.requiresConfirmation === true ||
+        (provenance === "freeform" &&
+          (this.deps.elevateFreeformConfirm ?? true)),
       actionLabel: (itemId, actionId) =>
         this.actionFor(itemId, actionId)?.label ?? actionId,
     });
 
     this.session = next;
 
-    const effectResult = await this.performEffect(effect, intent);
+    const effectResult = await this.performEffect(effect, intent, provenance);
     return this.withAudio({ ...effectResult, session: this.session });
   }
 
   private async performEffect(
     effect: Effect,
     intent: Intent,
+    provenance: IntentSource,
   ): Promise<EffectResult> {
+    let result: EffectResult;
+
     switch (effect.kind) {
       case "dispatch":
-        return this.dispatchEffect(effect, intent);
+        result = await this.dispatchEffect(effect, intent);
+        break;
 
       case "navigate":
-        return {
+        result = {
           ok: true,
           readback: this.navigationReadback(effect.directive),
           directive: effect.directive,
         };
+        break;
 
       case "read":
-        return { ok: true, readback: this.deps.readItem(effect.target) };
+        result = { ok: true, readback: this.deps.readItem(effect.target) };
+        break;
 
       case "open":
-        return {
+        result = {
           ok: true,
           readback: `Opening ${effect.target}.`,
           directive: { type: "open", id: effect.target },
         };
+        break;
 
       case "armed":
-        return {
+        result = {
           ok: true,
           readback: `Say 'confirm ${effect.actionId}' to ${effect.label} ${effect.itemId}.`,
         };
+        break;
 
       case "dictation_prompt":
-        return {
+        result = {
           ok: true,
           readback: `Dictate your ${dictationLabel(effect.actionId)}, then say 'post it'.`,
         };
+        break;
 
       case "dictation_readback":
-        return {
+        result = {
           ok: true,
           readback: `I heard: ${effect.body}. Say 'post it' to send, or 'cancel'.`,
         };
+        break;
 
       case "noMatch":
-        return { ok: false, readback: noMatchReadback(effect.reason) };
+        result = { ok: false, readback: noMatchReadback(effect.reason) };
+        break;
 
       case "cancelled":
-        return { ok: true, readback: "Cancelled." };
+        result = { ok: true, readback: "Cancelled." };
+        break;
 
       case "none":
-        return { ok: true, readback: "Done." };
+        result = { ok: true, readback: "Done." };
+        break;
     }
+
+    return provenance === "freeform"
+      ? withFreeformReadback(effect, result)
+      : result;
   }
 
   private async dispatchEffect(
@@ -235,5 +294,55 @@ function noMatchReadback(reason: NoMatchReason): string {
   }
 }
 
+function freeformNoMatch(text: string): Intent {
+  return { kind: "no_match", heard: text, reason: "unknown_command" };
+}
+
 const isRecord = (x: unknown): x is Record<string, unknown> =>
   typeof x === "object" && x !== null;
+
+function withFreeformReadback(
+  effect: Effect,
+  result: EffectResult,
+): EffectResult {
+  const interpretation = effectInterpretation(effect);
+  if (interpretation === undefined) {
+    return result;
+  }
+
+  return {
+    ...result,
+    readback: `I read that as: ${interpretation}. ${result.readback}`,
+  };
+}
+
+function effectInterpretation(effect: Effect): string | undefined {
+  switch (effect.kind) {
+    case "dispatch":
+    case "armed":
+      return `${effect.actionId} ${effect.itemId}`;
+    case "read":
+      return `read ${effect.target}`;
+    case "open":
+      return `open ${effect.target}`;
+    case "navigate":
+      return directiveInterpretation(effect.directive);
+    default:
+      return undefined;
+  }
+}
+
+function directiveInterpretation(directive: ClientDirective): string {
+  switch (directive.type) {
+    case "show_needs_me":
+      return "show what needs you";
+    case "select":
+      return `focus ${directive.id}`;
+    case "move":
+      return directive.delta === 1 ? "move to next" : "move to previous";
+    case "open":
+      return `open ${directive.id}`;
+    case "none":
+      return "do nothing";
+  }
+}

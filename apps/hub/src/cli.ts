@@ -5,15 +5,29 @@ import {
   runHookRelay,
   uninstallClaudeCodeHooks,
 } from "@aspex/adapter-claude-code";
+import { installCodexNotify, uninstallCodexNotify } from "@aspex/adapter-codex";
 import type { Preview } from "@aspex/schema";
 import { VERSION, buildHub } from "./boot";
-import { type PreviewConfig, type VoiceConfig, loadConfig } from "./config";
+import {
+  type IntentConfig,
+  type PreviewConfig,
+  type VoiceConfig,
+  loadConfig,
+} from "./config";
 import type { PreviewEngine } from "./preview/engine";
 import { createDockerEngine } from "./preview/engineDocker";
 import { createMockEngine } from "./preview/engineMock";
 import { loadPreviewRegistry } from "./preview/registry";
 
-type Command = "hub" | "up" | "hooks" | "hook-relay" | "voice" | "preview";
+type Command =
+  | "hub"
+  | "up"
+  | "hooks"
+  | "hook-relay"
+  | "codex"
+  | "voice"
+  | "intent"
+  | "preview";
 
 const HELP = `aspex ${VERSION}
 
@@ -21,10 +35,13 @@ Usage:
   aspex hub [--config <path>] [--mock]
   aspex up [--config <path>] [--mock]
   aspex voice check [--config <path>]
+  aspex intent check [--config <path>]
   aspex preview check [--config <path>] [--engine docker|mock]
   aspex preview list [--config <path>]
   aspex hooks install|uninstall
+  aspex codex install|uninstall
   aspex hook-relay --event <Name>
+  aspex hook-relay --source codex <notify-json>
 
 Options:
   --config <path>  Load a JSON config file
@@ -44,6 +61,7 @@ async function main(argv: string[]): Promise<void> {
       engine: { type: "string" },
       help: { type: "boolean", short: "h" },
       mock: { type: "boolean" },
+      source: { type: "string" },
       version: { type: "boolean", short: "v" },
     },
     strict: false,
@@ -80,8 +98,23 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
 
+  if (command === "codex") {
+    await runCodexCommand(parsed.positionals.slice(1));
+    return;
+  }
+
   if (command === "voice") {
     await runVoiceCommand(parsed.positionals.slice(1), {
+      configPath:
+        typeof parsed.values.config === "string"
+          ? parsed.values.config
+          : undefined,
+    });
+    return;
+  }
+
+  if (command === "intent") {
+    await runIntentCommand(parsed.positionals.slice(1), {
       configPath:
         typeof parsed.values.config === "string"
           ? parsed.values.config
@@ -114,6 +147,11 @@ async function main(argv: string[]): Promise<void> {
         typeof parsed.values.event === "string"
           ? parsed.values.event
           : undefined,
+      source:
+        typeof parsed.values.source === "string"
+          ? parsed.values.source
+          : undefined,
+      jsonArg: parsed.positionals[1],
     });
     return;
   }
@@ -308,10 +346,101 @@ async function runVoiceCommand(
   );
 }
 
+export async function runIntentCommand(
+  args: string[],
+  options: { configPath?: string; setExitCode?: (code: number) => void },
+): Promise<void> {
+  if (args[0] !== "check") {
+    console.error("Usage: aspex intent check [--config <path>]");
+    setIntentExitCode(options, 1);
+    return;
+  }
+
+  const cfg = await loadConfig({ configPath: options.configPath });
+  const intent = cfg.intent;
+
+  if (intent?.enabled !== true) {
+    console.error("Intent is disabled in config.");
+    setIntentExitCode(options, 1);
+    return;
+  }
+
+  if (intent.mock === true || cfg.mock === true) {
+    console.log("Intent mock reachable: MockIntentService.");
+    return;
+  }
+
+  const results = await Promise.all(
+    intent.endpoints.map((endpoint) => probeIntentEndpoint(endpoint, intent)),
+  );
+  const firstReachable = results.find((result) => result.ok);
+
+  for (const result of results) {
+    console.log(
+      `${result.ok ? "OK" : "FAIL"} Intent ${result.endpoint}${result.detail ? ` - ${result.detail}` : ""}`,
+    );
+  }
+
+  if (firstReachable === undefined) {
+    console.error("No intent endpoint reachable.");
+    setIntentExitCode(options, 1);
+    return;
+  }
+
+  console.log(
+    `Intent check passed. Ollama fallback starts at ${firstReachable.endpoint}.`,
+  );
+}
+
+function setIntentExitCode(
+  options: { setExitCode?: (code: number) => void },
+  code: number,
+): void {
+  if (options.setExitCode !== undefined) {
+    options.setExitCode(code);
+    return;
+  }
+
+  process.exitCode = code;
+}
+
 interface ProbeResult {
   endpoint: string;
   ok: boolean;
   detail?: string;
+}
+
+async function probeIntentEndpoint(
+  endpoint: string,
+  intent: IntentConfig,
+): Promise<ProbeResult> {
+  let tagsUrl: string;
+
+  try {
+    tagsUrl = ollamaTagsUrlFor(endpoint);
+  } catch (error) {
+    return { endpoint, ok: false, detail: errorMessage(error) };
+  }
+
+  try {
+    const response = await fetchWithTimeout(
+      tagsUrl,
+      { method: "GET" },
+      intent.timeoutMs,
+    );
+
+    if (!response.ok) {
+      return {
+        endpoint,
+        ok: false,
+        detail: `/api/tags returned ${response.status}`,
+      };
+    }
+
+    return { endpoint, ok: true, detail: "/api/tags reachable" };
+  } catch (error) {
+    return { endpoint, ok: false, detail: errorMessage(error) };
+  }
 }
 
 async function probeSttEndpoint(
@@ -462,6 +591,18 @@ function contractUrlFor(
   return url.toString();
 }
 
+function ollamaTagsUrlFor(endpoint: string): string {
+  const url = new URL(endpoint);
+  const trimmedPath = url.pathname.replace(/\/+$/, "");
+  url.pathname =
+    trimmedPath === "" || trimmedPath === "/"
+      ? "/api/tags"
+      : `${trimmedPath}/api/tags`;
+  url.hash = "";
+  url.search = "";
+  return url.toString();
+}
+
 function isTranscriptLike(value: unknown): value is {
   text: string;
   confidence: number;
@@ -497,18 +638,49 @@ async function runHooksCommand(args: string[]): Promise<void> {
   process.exitCode = 1;
 }
 
+export async function runCodexCommand(args: string[]): Promise<void> {
+  const action = args[0];
+
+  if (action === "install") {
+    const result = await installCodexNotify();
+    console.log(`Installed Codex notify hook in ${result.configPath}`);
+    return;
+  }
+
+  if (action === "uninstall") {
+    const result = await uninstallCodexNotify();
+    console.log(`Uninstalled Codex notify hook from ${result.configPath}`);
+    return;
+  }
+
+  console.error("Usage: aspex codex install|uninstall");
+  process.exitCode = 1;
+}
+
 async function runRelayCommand(options: {
   configPath?: string;
   event?: string;
+  source?: string;
+  jsonArg?: string;
 }): Promise<void> {
   try {
-    if (options.event === undefined || options.event.trim() === "") {
+    const source = options.source === "codex" ? "codex" : "claude-code";
+
+    if (
+      source === "claude-code" &&
+      (options.event === undefined || options.event.trim() === "")
+    ) {
       return;
     }
 
     const cfg = await loadConfig({ configPath: options.configPath });
 
-    await runHookRelay({ event: options.event, hubPort: cfg.hubPort });
+    await runHookRelay({
+      event: options.event,
+      hubPort: cfg.hubPort,
+      source,
+      jsonArg: options.jsonArg,
+    });
   } catch (_error) {
     return;
   }

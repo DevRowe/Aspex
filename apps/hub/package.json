@@ -11,9 +11,12 @@
   },
   "dependencies": {
     "@aspex/adapter-claude-code": "workspace:*",
+    "@aspex/adapter-codex": "workspace:*",
+    "@aspex/adapter-cursor": "workspace:*",
     "@aspex/adapter-github": "workspace:*",
     "@aspex/adapter-mock": "workspace:*",
     "@aspex/adapter-ntfy": "workspace:*",
+    "@aspex/adapter-opencode": "workspace:*",
     "@aspex/adapter-webhook": "workspace:*",
     "@aspex/schema": "workspace:*",
     "hono": "^4.12.27"

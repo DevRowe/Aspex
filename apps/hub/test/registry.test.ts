@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { CodexAdapter } from "@aspex/adapter-codex";
+import { CursorAdapter } from "@aspex/adapter-cursor";
+import { OpenCodeAdapter } from "@aspex/adapter-opencode";
 import {
   type Action,
   type ActionResult,
@@ -24,6 +27,8 @@ const routedSources: RouteCase[] = [
   { adapterId: "claude-code", itemId: "claude-code:session:abc" },
   { adapterId: "webhook", itemId: webhookId("build/agent#alpha") },
   { adapterId: "codex", itemId: "codex:session:abc" },
+  { adapterId: "opencode", itemId: "opencode:session:abc" },
+  { adapterId: "cursor", itemId: "cursor:agent:abc" },
 ];
 
 const identityDerivers: Derivers = {
@@ -188,6 +193,60 @@ describe("AdapterRegistry", () => {
         { itemId, actionId: "approve", payload },
       ]);
     }
+
+    db.close();
+  });
+
+  test("dispatchAction routes new observe-only adapter IDs to real adapter refusals", async () => {
+    const { db, registry } = openRegistry();
+
+    registry.register(new CodexAdapter());
+    registry.register(
+      new OpenCodeAdapter({
+        enabled: false,
+        serverUrl: "http://127.0.0.1:4096",
+      }),
+    );
+    registry.register(new CursorAdapter());
+
+    await expect(
+      registry.dispatchAction("codex:session:abc", "reply"),
+    ).resolves.toEqual({
+      ok: false,
+      message: "codex is observe-only in Phase 3",
+    });
+    await expect(
+      registry.dispatchAction("opencode:session:abc", "reply"),
+    ).resolves.toEqual({
+      ok: false,
+      message: "opencode is observe-only in Phase 3",
+    });
+    await expect(
+      registry.dispatchAction("cursor:agent:abc", "reply"),
+    ).resolves.toEqual({
+      ok: false,
+      message: "cursor is observe-only in Phase 3",
+    });
+
+    db.close();
+  });
+
+  test("dispatchAction keeps no-action non-agent adapters behind the Unknown action gate", async () => {
+    const { db, registry } = openRegistry();
+    const claude = new FakeAdapter("claude-code");
+    const webhook = new FakeAdapter("webhook");
+
+    registry.register(claude);
+    registry.register(webhook);
+
+    await expect(
+      registry.dispatchAction("claude-code:session:abc", "reply"),
+    ).resolves.toEqual({ ok: false, message: "Unknown action" });
+    await expect(
+      registry.dispatchAction(webhookId("build/agent#alpha"), "reply"),
+    ).resolves.toEqual({ ok: false, message: "Unknown action" });
+    expect(claude.runCalls).toEqual([]);
+    expect(webhook.runCalls).toEqual([]);
 
     db.close();
   });

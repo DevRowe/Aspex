@@ -1,9 +1,12 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { ClaudeCodeAdapter } from "@aspex/adapter-claude-code";
+import { CodexAdapter } from "@aspex/adapter-codex";
+import { CursorAdapter } from "@aspex/adapter-cursor";
 import { GithubAdapter } from "@aspex/adapter-github";
 import { MockAdapter } from "@aspex/adapter-mock";
 import { NtfyNotifier } from "@aspex/adapter-ntfy";
+import { OpenCodeAdapter } from "@aspex/adapter-opencode";
 import { WebhookAdapter } from "@aspex/adapter-webhook";
 import { AdapterRegistry } from "./adapters/registry";
 import { Bus } from "./bus";
@@ -19,6 +22,7 @@ import { type PreviewRegistry, loadPreviewRegistry } from "./preview/registry";
 import { openDb } from "./store/db";
 import { ItemStore } from "./store/itemStore";
 import { VoiceGateway } from "./voice/gateway";
+import { MockIntentService, OllamaIntentService } from "./voice/intentService";
 import { HttpSttClient, MockSttClient } from "./voice/sttClient";
 import { HttpTtsClient, MockTtsClient } from "./voice/ttsClient";
 import { WorldModel } from "./world/worldModel";
@@ -83,26 +87,50 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
     );
   }
 
+  if (cfg.adapters?.codex?.enabled === true) {
+    registry.register(new CodexAdapter());
+  }
+
+  if (cfg.adapters?.opencode?.enabled === true) {
+    registry.register(new OpenCodeAdapter(cfg.adapters.opencode));
+  }
+
+  if (cfg.adapters?.cursor?.enabled === true) {
+    registry.register(new CursorAdapter());
+  }
+
   if (cfg.ntfy !== undefined) {
     new NtfyNotifier(cfg.ntfy, bus);
   }
 
+  const intentService =
+    cfg.intent?.enabled === true
+      ? cfg.intent.mock === true || cfg.mock === true
+        ? new MockIntentService()
+        : new OllamaIntentService({
+            endpoints: cfg.intent.endpoints,
+            model: cfg.intent.model,
+            timeoutMs: cfg.intent.timeoutMs,
+          })
+      : undefined;
   const voiceGateway =
-    cfg.voice?.enabled === true
+    cfg.voice?.enabled === true || cfg.intent?.enabled === true
       ? new VoiceGateway({
           stt:
-            cfg.voice.mock === true
+            cfg.voice?.enabled !== true || cfg.voice.mock === true
               ? new MockSttClient()
               : new HttpSttClient(cfg.voice.stt),
           tts:
-            cfg.voice.mock === true
-              ? new MockTtsClient()
-              : cfg.voice.tts.endpoint !== undefined
-                ? new HttpTtsClient({
-                    endpoint: cfg.voice.tts.endpoint,
-                    timeoutMs: cfg.voice.stt.timeoutMs,
-                  })
-                : null,
+            cfg.voice?.enabled !== true
+              ? null
+              : cfg.voice.mock === true
+                ? new MockTtsClient()
+                : cfg.voice.tts.endpoint !== undefined
+                  ? new HttpTtsClient({
+                      endpoint: cfg.voice.tts.endpoint,
+                      timeoutMs: cfg.voice.stt.timeoutMs,
+                    })
+                  : null,
           dispatchAction: registry.dispatchAction.bind(registry),
           getSelectedActions: (id) =>
             world.snapshot().find((item) => item.id === id)?.actions ?? [],
@@ -112,9 +140,17 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
             rank(world.snapshot(), cfg.needsMeCap).needsMe.map(
               (item) => item.id,
             ),
+          snapshotCandidates: () =>
+            rank(world.snapshot(), cfg.needsMeCap).needsMe.map((item) => ({
+              itemId: item.id,
+              summary: item.summary,
+              actions: item.actions.map((action) => action.id),
+            })),
           readItem: (id) => readItem(world, id),
-          confidenceThreshold: cfg.voice.confidenceThreshold,
-          confirmTtlMs: cfg.voice.confirmTtlMs,
+          intentService,
+          elevateFreeformConfirm: cfg.intent?.elevateConfirm ?? true,
+          confidenceThreshold: cfg.voice?.confidenceThreshold ?? 0.6,
+          confirmTtlMs: cfg.voice?.confirmTtlMs ?? 8000,
         })
       : undefined;
 
@@ -135,6 +171,18 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
           ? true
           : cfg.voice?.tts.endpoint !== undefined,
     },
+    intent: {
+      enabled: cfg.intent?.enabled === true,
+      mock: cfg.intent?.mock === true || cfg.mock === true,
+    },
+    ...(cfg.adapters?.cursor?.enabled === true
+      ? {
+          cursorWebhook: {
+            enabled: true,
+            secret: cfg.adapters.cursor.secret,
+          },
+        }
+      : {}),
   };
   let app = buildApp({
     ...appDeps,

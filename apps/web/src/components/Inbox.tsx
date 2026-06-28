@@ -1,5 +1,8 @@
 import type { VoiceResult } from "@aspex/schema";
 import { useCallback, useState } from "react";
+import { IntentBar } from "../intent/IntentBar";
+import { IntentSessionPrompt } from "../intent/IntentSessionPrompt";
+import { useIntentAvailability } from "../intent/useIntent";
 import { Deck } from "../preview/Deck";
 import { usePreviewStore } from "../preview/usePreviews";
 import { useStore } from "../store";
@@ -27,7 +30,13 @@ export function Inbox() {
   const voiceSession = useVoiceStore((state) => state.session);
   const voiceError = useVoiceStore((state) => state.error);
   const previewsEnabled = usePreviewStore((state) => state.enabled);
+  const intentEnabled = useIntentAvailability();
   const [showOverflow, setShowOverflow] = useState(false);
+  const voiceHudEnabled =
+    voiceEnabled ||
+    voicePhase !== "idle" ||
+    voiceLastReadback !== null ||
+    voiceError !== null;
   const visibleNeedsMe = showOverflow ? [...needsMe, ...overflow] : needsMe;
   const selectedItem =
     [...needsMe, ...overflow, ...ambient].find(
@@ -104,14 +113,19 @@ export function Inbox() {
         </header>
 
         <div className="grid gap-2">
+          {intentEnabled ? <IntentBar /> : null}
           <VoiceHud
-            enabled={voiceEnabled}
+            enabled={voiceHudEnabled}
             phase={voicePhase}
             lastReadback={voiceLastReadback}
             lastOk={voiceLastOk}
             error={voiceError}
           />
-          <VoicePrompt session={voiceSession} />
+          {intentEnabled ? (
+            <IntentSessionPrompt session={voiceSession} />
+          ) : (
+            <VoicePrompt session={voiceSession} />
+          )}
         </div>
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,24rem)] lg:items-start">

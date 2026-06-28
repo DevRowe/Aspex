@@ -14,7 +14,9 @@ export interface AspexConfig {
   ntfy?: { server?: string; topic: string; minSeverity?: "medium" | "high" };
   liveness?: Partial<LivenessConfig>;
   voice?: VoiceConfig;
+  intent?: IntentConfig;
   previews?: PreviewConfig;
+  adapters?: AdaptersConfig;
   mock?: boolean;
 }
 
@@ -25,6 +27,15 @@ export interface VoiceConfig {
   confidenceThreshold: number;
   confirmTtlMs: number;
   pttKey: string;
+  mock?: boolean;
+}
+
+export interface IntentConfig {
+  enabled: boolean;
+  endpoints: string[];
+  model: string;
+  timeoutMs: number;
+  elevateConfirm: boolean;
   mock?: boolean;
 }
 
@@ -40,8 +51,23 @@ export interface PreviewConfig {
   specs: PreviewSpec[];
 }
 
+export interface AdaptersConfig {
+  codex?: { enabled: boolean };
+  opencode?: { enabled: boolean; serverUrl: string; directory?: string };
+  cursor?: { enabled: boolean; secret?: string };
+}
+
 type ConfigFile = Partial<
-  Omit<AspexConfig, "github" | "ntfy" | "liveness" | "voice" | "previews">
+  Omit<
+    AspexConfig,
+    | "github"
+    | "ntfy"
+    | "liveness"
+    | "voice"
+    | "intent"
+    | "previews"
+    | "adapters"
+  >
 > & {
   github?: Partial<AspexConfig["github"]>;
   ntfy?: Partial<AspexConfig["ntfy"]>;
@@ -50,8 +76,14 @@ type ConfigFile = Partial<
     stt?: Partial<VoiceConfig["stt"]>;
     tts?: Partial<VoiceConfig["tts"]>;
   };
+  intent?: Partial<IntentConfig>;
   previews?: Partial<Omit<PreviewConfig, "limits">> & {
     limits?: Partial<PreviewConfig["limits"]>;
+  };
+  adapters?: {
+    codex?: Partial<NonNullable<AdaptersConfig["codex"]>>;
+    opencode?: Partial<NonNullable<AdaptersConfig["opencode"]>>;
+    cursor?: Partial<NonNullable<AdaptersConfig["cursor"]>>;
   };
 };
 
@@ -67,6 +99,14 @@ const DEFAULT_VOICE_CONFIG: VoiceConfig = {
   pttKey: "Space",
 };
 
+const DEFAULT_INTENT_CONFIG: IntentConfig = {
+  enabled: false,
+  endpoints: ["http://127.0.0.1:11434"],
+  model: "llama3.1",
+  timeoutMs: 8000,
+  elevateConfirm: true,
+};
+
 const DEFAULT_PREVIEW_CONFIG: PreviewConfig = {
   enabled: false,
   engine: "docker",
@@ -75,13 +115,21 @@ const DEFAULT_PREVIEW_CONFIG: PreviewConfig = {
   specs: [],
 };
 
+const DEFAULT_ADAPTERS_CONFIG: AdaptersConfig = {
+  codex: { enabled: false },
+  opencode: { enabled: false, serverUrl: "http://127.0.0.1:4096" },
+  cursor: { enabled: false },
+};
+
 export const DEFAULT_CONFIG: AspexConfig = {
   hubPort: 4317,
   dbPath: "~/.aspex/aspex.sqlite",
   needsMeCap: 7,
   pollIntervalMs: 60_000,
   voice: DEFAULT_VOICE_CONFIG,
+  intent: DEFAULT_INTENT_CONFIG,
   previews: DEFAULT_PREVIEW_CONFIG,
+  adapters: DEFAULT_ADAPTERS_CONFIG,
   liveness: {
     pollGraceMs: 90_000,
     heartbeatGraceMs: 120_000,
@@ -166,7 +214,9 @@ function mergeConfig(base: AspexConfig, override: ConfigFile): AspexConfig {
     ntfy: mergeOptionalObject(base.ntfy, override.ntfy),
     liveness: mergeOptionalObject(base.liveness, override.liveness),
     voice: mergeVoiceConfig(base.voice, override.voice),
+    intent: mergeIntentConfig(base.intent, override.intent),
     previews: mergePreviewConfig(base.previews, override.previews),
+    adapters: mergeAdaptersConfig(base.adapters, override.adapters),
   };
 }
 
@@ -217,6 +267,27 @@ function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
     env.ASPEX_VOICE_PTT_KEY !== undefined
       ? optionalNonEmptyEnv(env.ASPEX_VOICE_PTT_KEY, "ASPEX_VOICE_PTT_KEY")
       : undefined;
+  const intentEnabled =
+    env.ASPEX_INTENT_ENABLED !== undefined
+      ? parseBoolean(
+          env.ASPEX_INTENT_ENABLED,
+          cfg.intent?.enabled,
+          "ASPEX_INTENT_ENABLED",
+        )
+      : undefined;
+  const intentEndpoints = parseCsv(env.ASPEX_INTENT_ENDPOINTS);
+  const intentModel =
+    env.ASPEX_INTENT_MODEL !== undefined
+      ? optionalNonEmptyEnv(env.ASPEX_INTENT_MODEL, "ASPEX_INTENT_MODEL")
+      : undefined;
+  const intentMock =
+    env.ASPEX_INTENT_MOCK !== undefined
+      ? parseBoolean(
+          env.ASPEX_INTENT_MOCK,
+          cfg.intent?.mock,
+          "ASPEX_INTENT_MOCK",
+        )
+      : undefined;
   const previewsEnabled =
     env.ASPEX_PREVIEWS_ENABLED !== undefined
       ? parseBoolean(
@@ -244,6 +315,48 @@ function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
           cfg.previews?.limits.idleTtlSec,
           "ASPEX_PREVIEWS_IDLE_TTL_SEC",
         )
+      : undefined;
+  const codexEnabled =
+    env.ASPEX_CODEX_ENABLED !== undefined
+      ? parseBoolean(
+          env.ASPEX_CODEX_ENABLED,
+          cfg.adapters?.codex?.enabled,
+          "ASPEX_CODEX_ENABLED",
+        )
+      : undefined;
+  const opencodeEnabled =
+    env.ASPEX_OPENCODE_ENABLED !== undefined
+      ? parseBoolean(
+          env.ASPEX_OPENCODE_ENABLED,
+          cfg.adapters?.opencode?.enabled,
+          "ASPEX_OPENCODE_ENABLED",
+        )
+      : undefined;
+  const opencodeServerUrl =
+    env.ASPEX_OPENCODE_SERVER_URL !== undefined
+      ? optionalNonEmptyEnv(
+          env.ASPEX_OPENCODE_SERVER_URL,
+          "ASPEX_OPENCODE_SERVER_URL",
+        )
+      : undefined;
+  const opencodeDirectory =
+    env.ASPEX_OPENCODE_DIRECTORY !== undefined
+      ? optionalNonEmptyEnv(
+          env.ASPEX_OPENCODE_DIRECTORY,
+          "ASPEX_OPENCODE_DIRECTORY",
+        )
+      : undefined;
+  const cursorEnabled =
+    env.ASPEX_CURSOR_ENABLED !== undefined
+      ? parseBoolean(
+          env.ASPEX_CURSOR_ENABLED,
+          cfg.adapters?.cursor?.enabled,
+          "ASPEX_CURSOR_ENABLED",
+        )
+      : undefined;
+  const cursorSecret =
+    env.ASPEX_CURSOR_SECRET !== undefined
+      ? optionalNonEmptyEnv(env.ASPEX_CURSOR_SECRET, "ASPEX_CURSOR_SECRET")
       : undefined;
   const github =
     githubToken !== undefined ||
@@ -296,6 +409,23 @@ function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
         },
       }
     : cfg.voice;
+  const hasIntentEnv =
+    intentEnabled !== undefined ||
+    intentEndpoints !== undefined ||
+    intentModel !== undefined ||
+    intentMock !== undefined;
+  const intentBase = cfg.intent ?? DEFAULT_INTENT_CONFIG;
+  const intent = hasIntentEnv
+    ? {
+        ...intentBase,
+        ...(intentEnabled !== undefined ? { enabled: intentEnabled } : {}),
+        ...(intentEndpoints !== undefined
+          ? { endpoints: intentEndpoints }
+          : {}),
+        ...(intentModel !== undefined ? { model: intentModel } : {}),
+        ...(intentMock !== undefined ? { mock: intentMock } : {}),
+      }
+    : cfg.intent;
   const hasPreviewEnv =
     previewsEnabled !== undefined ||
     previewsEngine !== undefined ||
@@ -318,6 +448,43 @@ function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
         },
       }
     : cfg.previews;
+  const hasAdaptersEnv =
+    codexEnabled !== undefined ||
+    opencodeEnabled !== undefined ||
+    opencodeServerUrl !== undefined ||
+    opencodeDirectory !== undefined ||
+    cursorEnabled !== undefined ||
+    cursorSecret !== undefined;
+  const adaptersBase = cfg.adapters ?? DEFAULT_ADAPTERS_CONFIG;
+  const adapters: AspexConfig["adapters"] = hasAdaptersEnv
+    ? {
+        ...adaptersBase,
+        codex: {
+          ...(adaptersBase.codex ?? { enabled: false }),
+          ...(codexEnabled !== undefined ? { enabled: codexEnabled } : {}),
+        },
+        opencode: {
+          ...(adaptersBase.opencode ?? {
+            enabled: false,
+            serverUrl: "http://127.0.0.1:4096",
+          }),
+          ...(opencodeEnabled !== undefined
+            ? { enabled: opencodeEnabled }
+            : {}),
+          ...(opencodeServerUrl !== undefined
+            ? { serverUrl: opencodeServerUrl }
+            : {}),
+          ...(opencodeDirectory !== undefined
+            ? { directory: opencodeDirectory }
+            : {}),
+        },
+        cursor: {
+          ...(adaptersBase.cursor ?? { enabled: false }),
+          ...(cursorEnabled !== undefined ? { enabled: cursorEnabled } : {}),
+          ...(cursorSecret !== undefined ? { secret: cursorSecret } : {}),
+        },
+      }
+    : cfg.adapters;
 
   return {
     ...cfg,
@@ -338,7 +505,9 @@ function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
     ntfy,
     mock: parseBoolean(env.ASPEX_MOCK, cfg.mock, "ASPEX_MOCK"),
     voice,
+    intent,
     previews,
+    adapters,
     liveness: {
       ...cfg.liveness,
       pollGraceMs: parseInteger(
@@ -375,7 +544,9 @@ function normalizeConfig(cfg: AspexConfig): AspexConfig {
     ...cfg,
     dbPath: expandHome(cfg.dbPath),
     voice: normalizeVoiceConfig(cfg.voice, cfg.mock),
+    intent: normalizeIntentConfig(cfg.intent, cfg.mock),
     previews: normalizePreviewConfig(cfg.previews),
+    adapters: normalizeAdaptersConfig(cfg.adapters),
   };
 
   if (normalized.github !== undefined) {
@@ -391,6 +562,151 @@ function normalizeConfig(cfg: AspexConfig): AspexConfig {
   }
 
   return normalized;
+}
+
+function normalizeAdaptersConfig(
+  adapters: AdaptersConfig | undefined,
+): AdaptersConfig {
+  const normalized = mergeAdaptersConfig(DEFAULT_CONFIG.adapters, adapters);
+
+  if (normalized === undefined) {
+    throw new Error("adapters config defaults are missing");
+  }
+
+  const codex = normalized.codex ?? { enabled: false };
+  const opencode = normalized.opencode ?? {
+    enabled: false,
+    serverUrl: "http://127.0.0.1:4096",
+  };
+  const cursor = normalized.cursor ?? { enabled: false };
+
+  if (typeof codex.enabled !== "boolean") {
+    throw new Error("adapters.codex.enabled must be a boolean");
+  }
+
+  if (typeof opencode.enabled !== "boolean") {
+    throw new Error("adapters.opencode.enabled must be a boolean");
+  }
+
+  if (typeof cursor.enabled !== "boolean") {
+    throw new Error("adapters.cursor.enabled must be a boolean");
+  }
+
+  if (
+    opencode.directory !== undefined &&
+    (typeof opencode.directory !== "string" || opencode.directory.trim() === "")
+  ) {
+    throw new Error(
+      "adapters.opencode.directory must be a non-empty string when set",
+    );
+  }
+
+  const serverUrl =
+    typeof opencode.serverUrl === "string" && opencode.serverUrl.trim() !== ""
+      ? opencode.serverUrl.trim()
+      : undefined;
+
+  if (opencode.enabled && serverUrl === undefined) {
+    throw new Error(
+      "adapters.opencode.serverUrl must be a non-empty valid URL when opencode is enabled",
+    );
+  }
+
+  const normalizedServerUrl =
+    opencode.enabled && serverUrl !== undefined
+      ? adapterBaseUrl(
+          serverUrl,
+          "adapters.opencode.serverUrl must be a non-empty valid URL when opencode is enabled",
+        )
+      : (opencode.serverUrl ?? "");
+
+  if (
+    cursor.enabled &&
+    (typeof cursor.secret !== "string" || cursor.secret.trim() === "")
+  ) {
+    throw new Error(
+      "adapters.cursor.secret must be a non-empty string when cursor is enabled",
+    );
+  }
+
+  return {
+    codex: { enabled: codex.enabled },
+    opencode: {
+      enabled: opencode.enabled,
+      serverUrl: normalizedServerUrl,
+      ...(opencode.directory === undefined
+        ? {}
+        : { directory: opencode.directory.trim() }),
+    },
+    cursor: {
+      enabled: cursor.enabled,
+      ...(cursor.secret === undefined ? {} : { secret: cursor.secret.trim() }),
+    },
+  };
+}
+
+function normalizeIntentConfig(
+  intent: IntentConfig | undefined,
+  globalMock: boolean | undefined,
+): IntentConfig {
+  const normalized = mergeIntentConfig(DEFAULT_CONFIG.intent, intent);
+
+  if (normalized === undefined) {
+    throw new Error("intent config defaults are missing");
+  }
+
+  const withMock = {
+    ...normalized,
+    mock: normalized.mock ?? (globalMock === true ? true : undefined),
+  };
+
+  if (typeof withMock.enabled !== "boolean") {
+    throw new Error("intent.enabled must be a boolean");
+  }
+
+  if (withMock.mock !== undefined && typeof withMock.mock !== "boolean") {
+    throw new Error("intent.mock must be a boolean");
+  }
+
+  if (typeof withMock.elevateConfirm !== "boolean") {
+    throw new Error("intent.elevateConfirm must be a boolean");
+  }
+
+  if (!Number.isInteger(withMock.timeoutMs) || withMock.timeoutMs <= 0) {
+    throw new Error("intent.timeoutMs must be a positive integer");
+  }
+
+  if (typeof withMock.model !== "string" || withMock.model.trim() === "") {
+    throw new Error("intent.model must be a non-empty string");
+  }
+
+  if (!Array.isArray(withMock.endpoints)) {
+    throw new Error("intent.endpoints must be an array");
+  }
+
+  if (
+    withMock.endpoints.some(
+      (endpoint) => typeof endpoint !== "string" || endpoint.trim() === "",
+    )
+  ) {
+    throw new Error("intent.endpoints must contain non-empty strings");
+  }
+
+  const endpoints = withMock.endpoints.map((endpoint) =>
+    intentBaseUrl(endpoint, "intent.endpoints"),
+  );
+
+  if (withMock.enabled && withMock.mock !== true && endpoints.length === 0) {
+    throw new Error(
+      "intent.endpoints must contain at least one endpoint when intent is enabled",
+    );
+  }
+
+  return {
+    ...withMock,
+    endpoints,
+    model: withMock.model.trim(),
+  };
 }
 
 function normalizePreviewConfig(
@@ -691,6 +1007,22 @@ function mergeVoiceConfig(
   } as VoiceConfig;
 }
 
+function mergeIntentConfig(
+  base: IntentConfig | undefined,
+  override: ConfigFile["intent"] | undefined,
+): IntentConfig | undefined {
+  if (override === undefined) {
+    return base;
+  }
+
+  return {
+    ...(base ?? DEFAULT_INTENT_CONFIG),
+    ...override,
+    endpoints:
+      override.endpoints ?? base?.endpoints ?? DEFAULT_INTENT_CONFIG.endpoints,
+  } as IntentConfig;
+}
+
 function mergePreviewConfig(
   base: PreviewConfig | undefined,
   override: ConfigFile["previews"] | undefined,
@@ -708,6 +1040,64 @@ function mergePreviewConfig(
     },
     specs: override.specs ?? base?.specs ?? DEFAULT_PREVIEW_CONFIG.specs,
   } as PreviewConfig;
+}
+
+function mergeAdaptersConfig(
+  base: AdaptersConfig | undefined,
+  override: ConfigFile["adapters"] | undefined,
+): AdaptersConfig | undefined {
+  if (override === undefined) {
+    return base;
+  }
+
+  return {
+    ...(base ?? DEFAULT_ADAPTERS_CONFIG),
+    codex: {
+      ...(base?.codex ?? { enabled: false }),
+      ...override.codex,
+    },
+    opencode: {
+      ...(base?.opencode ?? {
+        enabled: false,
+        serverUrl: "http://127.0.0.1:4096",
+      }),
+      ...override.opencode,
+    },
+    cursor: {
+      ...(base?.cursor ?? { enabled: false }),
+      ...override.cursor,
+    },
+  } as AdaptersConfig;
+}
+
+function adapterBaseUrl(endpoint: string, message: string): string {
+  try {
+    const url = new URL(endpoint);
+    url.pathname = url.pathname.replace(/\/+$/, "");
+    if (url.pathname === "") {
+      url.pathname = "/";
+    }
+    url.hash = "";
+    url.search = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    throw new Error(message);
+  }
+}
+
+function intentBaseUrl(endpoint: string, field: string): string {
+  try {
+    const url = new URL(endpoint);
+    url.pathname = url.pathname.replace(/\/+$/, "");
+    if (url.pathname === "") {
+      url.pathname = "/";
+    }
+    url.hash = "";
+    url.search = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    throw new Error(`${field} must contain valid URLs`);
+  }
 }
 
 function voiceContractUrl(

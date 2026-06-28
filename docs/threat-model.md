@@ -1,8 +1,9 @@
 # Threat Model
 
-This document describes the security stance as shipped through Phase 2. It is
+This document describes the security stance as shipped through Phase 3. It is
 scoped to the local Hub, web cockpit, desktop shell, Phase 0 adapters, and the
-Phase 1 flat voice loop, and the Phase 2 Preview Deck.
+Phase 1 flat voice loop, the Phase 2 Preview Deck, and Phase 3 free-form intent
+plus observe-only agent adapters.
 
 ## Security Goals
 
@@ -26,13 +27,14 @@ Disallowed in the Hub and web origin:
 - Installing or loading code from an adapter payload.
 - Treating preview content as trusted cockpit UI.
 
-Summaries and evidence are deterministic templates in Phase 0. There is no LLM
-summarization path in the shipped core.
+Summaries and evidence are deterministic templates in Phase 0. Phase 3 adds an
+opt-in local LLM Intent service, but it returns constrained Intents only; it is
+not a summarization or command-execution path.
 
 ## Local-Only Boundary
 
 The Hub binds `127.0.0.1` and is intended for same-machine access only. There is
-no public ingress in Phase 0.
+no automatic public ingress.
 
 The desktop shell and web client talk to the local Hub over REST and SSE. The
 Hub stores state locally in SQLite. A GitHub token, when configured, stays local
@@ -47,6 +49,9 @@ Trusted enough to parse, not trusted to execute:
 
 - GitHub API responses.
 - Claude Code hook JSON forwarded by `aspex hook-relay`.
+- Codex notify JSON forwarded by `aspex hook-relay`.
+- OpenCode local `/event` SSE events.
+- Cursor `statusChange` webhook JSON when explicitly enabled.
 - Local webhook JSON.
 - Mock/demo event fixtures.
 - Adapter evidence text and URLs.
@@ -149,6 +154,55 @@ The Hub remains `127.0.0.1` only. Docker is opt-in and capability-detected; if
 the configured engine is unavailable, Preview routes are disabled with an
 honest warning and the Hub continues to run. CI and broker tests use the mock
 engine and require no Docker.
+
+## Free-Form Intent (Phase 3)
+
+Free-form intent is opt-in and default off. The closed Phase 1 grammar runs
+first, and the local Intent service is called only when the grammar returns
+`no_match` with reason `unknown_command`. Other no-match reasons do not reach
+the model.
+
+The Intent service is a prompt-injection surface because it receives untrusted
+Item summaries, which can contain agent-authored titles and details, while
+resolving referents. The defense is structural, following ADR-0019 and
+ADR-0020: the model output is an enum-constrained `Intent` built from the live
+Voice context. Item ids and action ids are schema enums. The model cannot invent
+ids, create actions, emit shell commands, or escape the first-stage Intent
+union.
+
+The schema permits first-stage Intents only: navigation, read, open, action,
+dictate, or `no_match`. It does not permit `confirm`, `dictation_body`, `post`,
+or `cancel`. Free-form is single-shot and never orchestrates compound,
+conditional, or scheduled work.
+
+Dangerous actions still need the normal separate confirm phrase. In the shipped
+default, any free-form-originated action also elevates confirmation, even if the
+underlying adapter action is normally safe. The readback is honest about the
+interpretation before the user confirms.
+
+The real Intent service calls local Ollama over `/api/chat` with a per-request
+JSON Schema in `format`. There is no cloud LLM and no telemetry. CI and local
+smoke tests can use `ASPEX_INTENT_MOCK=1`, which loads no model and needs no
+GPU.
+
+## Cursor Cloud Webhook (Phase 3)
+
+Cursor ingestion is the one Phase 3 cloud-origin inbound surface, and it is a
+bounded exception under ADR-0022. It is opt-in, default off, and observe-only.
+The Hub mounts `POST /webhooks/cursor` only when the cursor adapter is enabled.
+
+The route is signature-verified with the configured shared secret and fails
+closed without a secret. Unsigned or invalid payloads are rejected before they
+become Signals.
+
+Aspex never auto-exposes this endpoint. The Hub still binds `127.0.0.1`. If a
+Cursor cloud agent can reach the route, that is the user's deliberate ingress
+choice, for example through their own Tailscale Funnel or equivalent tunnel.
+Aspex does not manage a public-webhook or Funnel subsystem in Phase 3.
+
+Cursor payloads become agent-local Items such as `cursor:agent:<id>` with
+deep-links. They do not dispatch control actions and do not own PR-lifecycle
+attention.
 
 ## Future Labs Isolation
 

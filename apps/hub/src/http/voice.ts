@@ -1,5 +1,10 @@
-import { type VoiceContext, assertVoiceContext } from "@aspex/schema";
+import {
+  type VoiceContext,
+  type VoiceResult,
+  assertVoiceContext,
+} from "@aspex/schema";
 import type { Hono } from "hono";
+import type { VoiceGatewayResult } from "../voice/gateway";
 import type { ServerDeps } from "./server";
 
 const AUDIO_TTL_MS = 60_000;
@@ -13,7 +18,10 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
   const audioCache = new Map<string, CachedAudio>();
 
   app.post("/voice/utterance", async (c) => {
-    if (deps.voiceGateway === undefined) {
+    if (
+      deps.voiceGateway === undefined ||
+      (deps.voice !== undefined && deps.voice.enabled !== true)
+    ) {
       return c.json({ error: "voice not configured" }, 503);
     }
 
@@ -47,26 +55,37 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
       request.mime,
       request.context,
     );
-    const rawAudio = result.audio;
-    const jsonResult = {
-      ok: result.ok,
-      readback: result.readback,
-      ...(result.directive !== undefined
-        ? { directive: result.directive }
-        : {}),
-      session: result.session,
-    };
+    return c.json(cacheAudioResult(result, audioCache));
+  });
 
-    if (rawAudio !== undefined) {
-      const id = crypto.randomUUID();
-      audioCache.set(id, {
-        bytes: rawAudio,
-        expiresAt: Date.now() + AUDIO_TTL_MS,
-      });
-      return c.json({ ...jsonResult, audioUrl: `/voice/audio/${id}` });
+  app.post("/intent", async (c) => {
+    if (deps.voiceGateway === undefined || deps.intent?.enabled !== true) {
+      return c.json({ error: "intent not configured" }, 503);
     }
 
-    return c.json(jsonResult);
+    let request: { text: string; context: VoiceContext };
+
+    try {
+      cleanupAudioCache(audioCache, Date.now());
+      const body = await c.req.json();
+      const text = isRecord(body) ? body.text : undefined;
+
+      if (typeof text !== "string" || text.trim() === "") {
+        return c.json({ error: "text required" }, 400);
+      }
+
+      const context = isRecord(body) ? body.context : undefined;
+      assertVoiceContext(context);
+      request = { text, context };
+    } catch (error) {
+      return c.json({ message: validationMessage(error) }, 400);
+    }
+
+    const result = await deps.voiceGateway.handleText(
+      request.text,
+      request.context,
+    );
+    return c.json(cacheAudioResult(result, audioCache));
   });
 
   app.get("/voice/audio/:id", (c) => {
@@ -129,6 +148,29 @@ function cleanupAudioCache(
   }
 }
 
+function cacheAudioResult(
+  result: VoiceGatewayResult,
+  audioCache: Map<string, CachedAudio>,
+): VoiceResult {
+  const jsonResult: VoiceResult = {
+    ok: result.ok,
+    readback: result.readback,
+    ...(result.directive !== undefined ? { directive: result.directive } : {}),
+    session: result.session,
+  };
+
+  if (result.audio === undefined) {
+    return jsonResult;
+  }
+
+  const id = crypto.randomUUID();
+  audioCache.set(id, {
+    bytes: result.audio,
+    expiresAt: Date.now() + AUDIO_TTL_MS,
+  });
+  return { ...jsonResult, audioUrl: `/voice/audio/${id}` };
+}
+
 function validationMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Invalid request";
 }
@@ -143,3 +185,6 @@ function isFileLike(value: FormDataEntryValue | null): value is File {
     typeof value.type === "string"
   );
 }
+
+const isRecord = (x: unknown): x is Record<string, unknown> =>
+  typeof x === "object" && x !== null;

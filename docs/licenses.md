@@ -1,7 +1,7 @@
 # Dependency License Registry
 
 Aspex core is licensed under Apache-2.0. This registry tracks the dependency
-license posture for the shipped core through Phase 2.
+license posture for the shipped core through Phase 3.
 
 As of this registry, the shipped core has no AGPL or GPL dependencies.
 
@@ -15,6 +15,7 @@ Sources checked:
 - installed package metadata where present
 - `services/voice-server/pyproject.toml`
 - reference voice service source files
+- Phase 3 adapter package manifests
 
 ## JavaScript and TypeScript
 
@@ -51,6 +52,13 @@ existing Hub SSE stream. It adds no npm runtime dependency. The Docker Preview
 engine invokes the host's `docker` command-line tool as an optional external
 capability; Aspex does not link a Docker SDK, native addon, daemon library, or
 vendored Docker component.
+
+Phase 3 free-form intent uses Bun `fetch` to call a configured Ollama-compatible
+HTTP endpoint. It adds no npm runtime dependency for the Intent service.
+
+Phase 3 codex, opencode, and cursor adapters are first-party workspace packages
+that depend only on `@aspex/schema`. The Hub links those packages but does not
+vendor code from the host-installed codex CLI, opencode CLI/server, or Cursor.
 
 ## Rust / Tauri
 
@@ -92,6 +100,23 @@ Real STT/TTS mode is host-provisioned and optional:
 - `ffmpeg` may be used by the Parakeet wrapper to normalize browser audio before
   transcription. It is an external host tool, not vendored into the core app.
 
+## Phase 3 Intent and Agent Tools
+
+These components are host-installed or consumed over data protocols. They are
+not vendored into the Aspex core dependency graph.
+
+| Component | Use | License posture |
+| --- | --- | --- |
+| Ollama | Optional local Intent service reached over `/api/chat` | Host-installed tool; review the installed version's license on the target machine. |
+| Ollama model weights | Selected by `intent.model`, for example `llama3.1` | Host-installed weights; each model has its own license and use restrictions. The user must review the selected model before use. |
+| codex CLI | Optional source that can call `aspex hook-relay` through its notify mechanism | Host-installed tool; no codex CLI code is linked or vendored by Aspex. Review the installed tool's license separately. |
+| opencode CLI/server | Optional local source observed through `opencode serve` `/event` SSE | Host-installed tool/server; no opencode code or SDK is linked or vendored by Aspex. Review the installed tool's license separately. |
+| Cursor | Optional cloud-origin `statusChange` payload and deep-link source | Webhook payload plus deep-link only. No Cursor code is linked, imported, or vendored by Aspex. |
+
+No AGPL/GPL dependency entered the shipped core in Phase 3. If a future change
+adds a real SDK or vendored client for any of these tools, update this registry
+in the same change and review its transitive licenses.
+
 ## Deferred Preview Components
 
 The untrusted pixels lane is not shipped in Phase 2. Components discussed for
@@ -109,5 +134,7 @@ them.
   boundaries unless a later ADR explicitly changes that boundary.
 - Keep model/tooling components for voice as separate services or host tools
   unless a later ADR explicitly changes that boundary.
+- Keep local LLMs, model weights, and agent CLIs as host-installed tools or
+  HTTP/data boundaries unless a later ADR explicitly changes that boundary.
 - Update this file in the same change as any dependency add, removal, or major
   version change.

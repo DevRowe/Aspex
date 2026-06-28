@@ -6,6 +6,9 @@ export const githubPrId = (repo: string, number: number): ItemId =>
 export const claudeSessionId = (sessionId: string): ItemId =>
   `claude-code:session:${sessionId}`;
 
+export const codexSessionId = (threadId: string): ItemId =>
+  `codex:session:${threadId}`;
+
 export const webhookId = (key: string): ItemId => `webhook:${key}`;
 
 export function parseItemId(

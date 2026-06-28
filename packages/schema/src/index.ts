@@ -4,3 +4,4 @@ export * from "./types";
 export * from "./validate";
 export * from "./preview";
 export * from "./voice";
+export * from "./intent";

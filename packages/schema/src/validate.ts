@@ -4,6 +4,8 @@ const SOURCES = [
   "github",
   "claude-code",
   "codex",
+  "opencode",
+  "cursor",
   "webhook",
   "ntfy",
   "mcp",

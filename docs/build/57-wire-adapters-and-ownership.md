@@ -38,7 +38,7 @@ if (cfg.adapters?.cursor?.enabled)   registry.register(new CursorAdapter(cfg.ada
 Extend the card-08 constant map: `github→github`, `claude-code→claude-code`, `webhook→webhook`, `codex→codex`, **`opencode→opencode`**, **`cursor→cursor`**. (`codex` was a placeholder in card 08 — it's now backed by a real adapter.)
 
 ## Ownership guard (ADR-0002)
-The new adapters must **only** emit agent-local reasons (`blocked_on_human`, `error`, or Ambient `working`/`done`). They must **never** emit a PR-lifecycle reason (`review_requested`, `failing_ci`, `needs_merge`) — those belong to github, so one unit of work never glows twice. Add a test asserting that across each adapter's fixtures, no emitted Signal carries a PR-lifecycle reason.
+The new adapters must **only** emit agent-local reasons (`blocked_on_human`, `errored`, or Ambient `working`/`done`). They must **never** emit a PR-lifecycle reason (`review_requested`, `failing_ci`, `awaiting_merge`) — those belong to github, so one unit of work never glows twice. Add a test asserting that across each adapter's fixtures, no emitted Signal carries a PR-lifecycle reason.
 
 ## Steps
 1. Add `AdaptersConfig` + defaults + validation (`opencode.serverUrl`, `cursor.secret` fail-closed).

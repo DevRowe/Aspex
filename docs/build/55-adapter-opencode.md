@@ -42,7 +42,7 @@ interface OpenCodeAdapterConfig {
 | opencode event (verify) | Item | State / Reason |
 |---|---|---|
 | session awaiting user input / permission | `opencode:session:<id>` | `state: blocked`, `reason: blocked_on_human`, attentionRequired, `deepLink` |
-| session error / aborted | `opencode:session:<id>` | `state: error`, `reason: error`, attentionRequired |
+| session error / aborted | `opencode:session:<id>` | `state: error`, `reason: errored`, attentionRequired |
 | session running / message streaming | `opencode:session:<id>` | `state: working`, Ambient (attentionRequired **false**) + heartbeat |
 | session completed/idle | `opencode:session:<id>` | `state: done`, Ambient (ADR-0002 — completion is not attention) |
 | everything else | — | ignore (but still counts as a heartbeat) |

@@ -21,9 +21,12 @@
       },
       "dependencies": {
         "@aspex/adapter-claude-code": "workspace:*",
+        "@aspex/adapter-codex": "workspace:*",
+        "@aspex/adapter-cursor": "workspace:*",
         "@aspex/adapter-github": "workspace:*",
         "@aspex/adapter-mock": "workspace:*",
         "@aspex/adapter-ntfy": "workspace:*",
+        "@aspex/adapter-opencode": "workspace:*",
         "@aspex/adapter-webhook": "workspace:*",
         "@aspex/schema": "workspace:*",
         "hono": "^4.12.27",
@@ -53,6 +56,27 @@
     },
     "packages/adapter-claude-code": {
       "name": "@aspex/adapter-claude-code",
+      "dependencies": {
+        "@aspex/adapter-codex": "workspace:*",
+        "@aspex/schema": "workspace:*",
+      },
+      "devDependencies": {
+        "bun-types": "latest",
+        "typescript": "^5.5.0",
+      },
+    },
+    "packages/adapter-codex": {
+      "name": "@aspex/adapter-codex",
+      "dependencies": {
+        "@aspex/schema": "workspace:*",
+      },
+      "devDependencies": {
+        "bun-types": "latest",
+        "typescript": "^5.5.0",
+      },
+    },
+    "packages/adapter-cursor": {
+      "name": "@aspex/adapter-cursor",
       "dependencies": {
         "@aspex/schema": "workspace:*",
       },
@@ -92,6 +116,16 @@
         "typescript": "^5.5.0",
       },
     },
+    "packages/adapter-opencode": {
+      "name": "@aspex/adapter-opencode",
+      "dependencies": {
+        "@aspex/schema": "workspace:*",
+      },
+      "devDependencies": {
+        "bun-types": "latest",
+        "typescript": "^5.5.0",
+      },
+    },
     "packages/adapter-webhook": {
       "name": "@aspex/adapter-webhook",
       "dependencies": {
@@ -111,11 +145,17 @@
 
     "@aspex/adapter-claude-code": ["@aspex/adapter-claude-code@workspace:packages/adapter-claude-code"],
 
+    "@aspex/adapter-codex": ["@aspex/adapter-codex@workspace:packages/adapter-codex"],
+
+    "@aspex/adapter-cursor": ["@aspex/adapter-cursor@workspace:packages/adapter-cursor"],
+
     "@aspex/adapter-github": ["@aspex/adapter-github@workspace:packages/adapter-github"],
 
     "@aspex/adapter-mock": ["@aspex/adapter-mock@workspace:packages/adapter-mock"],
 
     "@aspex/adapter-ntfy": ["@aspex/adapter-ntfy@workspace:packages/adapter-ntfy"],
+
+    "@aspex/adapter-opencode": ["@aspex/adapter-opencode@workspace:packages/adapter-opencode"],
 
     "@aspex/adapter-webhook": ["@aspex/adapter-webhook@workspace:packages/adapter-webhook"],
 

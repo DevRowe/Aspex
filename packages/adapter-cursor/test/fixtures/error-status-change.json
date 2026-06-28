@@ -1,0 +1,8 @@
+{
+  "type": "statusChange",
+  "statusChange": "ERROR",
+  "agentId": "agent-error-1",
+  "project": "aspex",
+  "summary": "Cursor agent hit a failed command",
+  "deepLink": "cursor://agent/agent-error-1"
+}

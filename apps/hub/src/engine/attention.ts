@@ -37,7 +37,9 @@ export function severityRank(severity: Severity): number {
 // ADR-0002 guard. Adapters set reason/attentionRequired; this clamps them so the
 // ownership rule holds even if an adapter misbehaves.
 export function enforceOwnership(item: AttentionItem): AttentionItem {
-  if (item.source === "claude-code" || item.source === "codex") {
+  const source = item.source as string;
+
+  if (source === "claude-code" || source === "codex") {
     if (item.state === "blocked") {
       return {
         ...item,
@@ -51,6 +53,48 @@ export function enforceOwnership(item: AttentionItem): AttentionItem {
         ...item,
         attentionRequired: true,
         reason: "blocked_on_human",
+        severity: "high",
+      };
+    }
+
+    return {
+      ...item,
+      attentionRequired: false,
+      reason: "ambient",
+    };
+  }
+
+  if (source === "cursor") {
+    if (item.state === "error") {
+      return {
+        ...item,
+        attentionRequired: true,
+        reason: "errored",
+        severity: "high",
+      };
+    }
+
+    return {
+      ...item,
+      attentionRequired: false,
+      reason: "ambient",
+    };
+  }
+
+  if (source === "opencode") {
+    if (item.state === "blocked") {
+      return {
+        ...item,
+        attentionRequired: true,
+        reason: "blocked_on_human",
+      };
+    }
+
+    if (item.state === "error") {
+      return {
+        ...item,
+        attentionRequired: true,
+        reason: "errored",
         severity: "high",
       };
     }

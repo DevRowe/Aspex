@@ -1,0 +1,4 @@
+{"type":"session.updated","session":{"id":"blocked-1","status":"awaiting_input","directory":"D:\\BroCorp\\Aspex"},"message":"OpenCode needs permission to run a command"}
+{"type":"message.updated","session":{"id":"blocked-1","status":"running","directory":"D:\\BroCorp\\Aspex"},"message":{"status":"streaming"}}
+{"type":"session.updated","session":{"id":"error-1","status":"error","directory":"D:\\BroCorp\\Aspex"},"error":{"message":"Tool execution failed"}}
+{"type":"session.updated","session":{"id":"done-1","status":"completed","directory":"D:\\BroCorp\\Aspex"},"summary":"OpenCode session completed"}

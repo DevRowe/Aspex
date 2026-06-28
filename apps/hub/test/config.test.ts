@@ -38,12 +38,27 @@ describe("hub config", () => {
         confirmTtlMs: 8000,
         pttKey: "Space",
       });
+      expect(cfg.intent).toEqual({
+        enabled: false,
+        endpoints: ["http://127.0.0.1:11434"],
+        model: "llama3.1",
+        timeoutMs: 8000,
+        elevateConfirm: true,
+      });
       expect(cfg.previews).toEqual({
         enabled: false,
         engine: "docker",
         maxConcurrent: 3,
         limits: { cpus: "1", memory: "512m", idleTtlSec: 600 },
         specs: [],
+      });
+      expect(cfg.adapters).toEqual({
+        codex: { enabled: false },
+        opencode: {
+          enabled: false,
+          serverUrl: "http://127.0.0.1:4096",
+        },
+        cursor: { enabled: false },
       });
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -57,6 +72,28 @@ describe("hub config", () => {
     });
 
     expect(cfg.voice?.enabled).toBe(false);
+  });
+
+  test("intent is disabled by default", async () => {
+    const cfg = await loadConfig({
+      defaultConfigPath: join(tmpdir(), `missing-aspex-${process.pid}.json`),
+      env: {},
+    });
+
+    expect(cfg.intent?.enabled).toBe(false);
+  });
+
+  test("agent adapters are disabled by default", async () => {
+    const cfg = await loadConfig({
+      defaultConfigPath: join(tmpdir(), `missing-aspex-${process.pid}.json`),
+      env: {},
+    });
+
+    expect(cfg.adapters).toMatchObject({
+      codex: { enabled: false },
+      opencode: { enabled: false },
+      cursor: { enabled: false },
+    });
   });
 
   test("applies environment overrides after defaults", async () => {
@@ -93,6 +130,7 @@ describe("hub config", () => {
     });
     expect(cfg.liveness?.quietAfterMs).toBe(1000);
     expect(cfg.voice?.mock).toBe(true);
+    expect(cfg.intent?.mock).toBe(true);
   });
 
   test("applies preview environment overrides", async () => {
@@ -141,6 +179,118 @@ describe("hub config", () => {
       mock: true,
       pttKey: "KeyV",
     });
+  });
+
+  test("applies intent environment overrides", async () => {
+    const cfg = await loadConfig({
+      defaultConfigPath: join(tmpdir(), `missing-aspex-${process.pid}.json`),
+      env: {
+        ASPEX_INTENT_ENABLED: "1",
+        ASPEX_INTENT_ENDPOINTS: "http://127.0.0.1:11434, http://gpu:11434/",
+        ASPEX_INTENT_MODEL: "llama3.1:8b",
+        ASPEX_INTENT_MOCK: "true",
+      },
+    });
+
+    expect(cfg.intent).toMatchObject({
+      enabled: true,
+      endpoints: ["http://127.0.0.1:11434", "http://gpu:11434"],
+      model: "llama3.1:8b",
+      mock: true,
+      timeoutMs: 8000,
+      elevateConfirm: true,
+    });
+  });
+
+  test("applies adapter environment overrides", async () => {
+    const cfg = await loadConfig({
+      defaultConfigPath: join(tmpdir(), `missing-aspex-${process.pid}.json`),
+      env: {
+        ASPEX_CODEX_ENABLED: "1",
+        ASPEX_OPENCODE_ENABLED: "true",
+        ASPEX_OPENCODE_SERVER_URL: "http://127.0.0.1:4096/",
+        ASPEX_OPENCODE_DIRECTORY: "D:\\BroCorp\\Aspex",
+        ASPEX_CURSOR_ENABLED: "true",
+        ASPEX_CURSOR_SECRET: "cursor-secret",
+      },
+    });
+
+    expect(cfg.adapters).toEqual({
+      codex: { enabled: true },
+      opencode: {
+        enabled: true,
+        serverUrl: "http://127.0.0.1:4096",
+        directory: "D:\\BroCorp\\Aspex",
+      },
+      cursor: { enabled: true, secret: "cursor-secret" },
+    });
+  });
+
+  test("validates enabled adapter config", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "aspex-adapters-invalid-"));
+    const opencodeUrlPath = join(dir, "opencode-url.json");
+    const opencodeEmptyPath = join(dir, "opencode-empty.json");
+    const cursorSecretPath = join(dir, "cursor-secret.json");
+
+    await writeFile(
+      opencodeUrlPath,
+      JSON.stringify({
+        adapters: { opencode: { enabled: true, serverUrl: "not-a-url" } },
+      }),
+    );
+    await writeFile(
+      opencodeEmptyPath,
+      JSON.stringify({
+        adapters: { opencode: { enabled: true, serverUrl: "" } },
+      }),
+    );
+    await writeFile(
+      cursorSecretPath,
+      JSON.stringify({ adapters: { cursor: { enabled: true } } }),
+    );
+
+    try {
+      await expect(
+        loadConfig({ configPath: opencodeUrlPath, env: {} }),
+      ).rejects.toThrow(
+        "adapters.opencode.serverUrl must be a non-empty valid URL when opencode is enabled",
+      );
+      await expect(
+        loadConfig({ configPath: opencodeEmptyPath, env: {} }),
+      ).rejects.toThrow(
+        "adapters.opencode.serverUrl must be a non-empty valid URL when opencode is enabled",
+      );
+      await expect(
+        loadConfig({ configPath: cursorSecretPath, env: {} }),
+      ).rejects.toThrow(
+        "adapters.cursor.secret must be a non-empty string when cursor is enabled",
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not validate opencode serverUrl while opencode is disabled", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "aspex-opencode-disabled-"));
+    const configPath = join(dir, "config.json");
+
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        adapters: { opencode: { enabled: false, serverUrl: "not-a-url" } },
+      }),
+    );
+
+    try {
+      const cfg = await loadConfig({ configPath, env: {} });
+
+      expect(cfg.adapters?.opencode).toMatchObject({
+        enabled: false,
+        serverUrl: "not-a-url",
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   test("normalizes voice service base URLs to contract endpoints", async () => {
@@ -311,6 +461,102 @@ describe("hub config", () => {
     ).rejects.toThrow(
       "ASPEX_PREVIEWS_MAX_CONCURRENT must be a positive integer",
     );
+
+    await expect(
+      loadConfig({
+        defaultConfigPath: join(tmpdir(), `missing-aspex-${process.pid}.json`),
+        env: { ASPEX_INTENT_ENABLED: "sometimes" },
+      }),
+    ).rejects.toThrow("ASPEX_INTENT_ENABLED must be a boolean");
+  });
+
+  test("rejects enabled real intent with no endpoints", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "aspex-intent-empty-"));
+    const configPath = join(dir, "config.json");
+
+    await writeFile(
+      configPath,
+      JSON.stringify({ intent: { enabled: true, endpoints: [] } }),
+    );
+
+    try {
+      await expect(loadConfig({ configPath, env: {} })).rejects.toThrow(
+        "intent.endpoints must contain at least one endpoint when intent is enabled",
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("allows disabled real intent with no endpoints", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "aspex-intent-disabled-empty-"));
+    const configPath = join(dir, "config.json");
+
+    await writeFile(
+      configPath,
+      JSON.stringify({ intent: { enabled: false, endpoints: [] } }),
+    );
+
+    try {
+      const cfg = await loadConfig({ configPath, env: {} });
+
+      expect(cfg.intent).toMatchObject({
+        enabled: false,
+        endpoints: [],
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("allows enabled mock intent with no endpoints", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "aspex-intent-mock-empty-"));
+    const configPath = join(dir, "config.json");
+
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        intent: { enabled: true, mock: true, endpoints: [] },
+      }),
+    );
+
+    try {
+      const cfg = await loadConfig({ configPath, env: {} });
+
+      expect(cfg.intent).toMatchObject({
+        enabled: true,
+        mock: true,
+        endpoints: [],
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("validates intent config shape", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "aspex-intent-shape-"));
+    const timeoutConfigPath = join(dir, "timeout.json");
+    const booleanConfigPath = join(dir, "boolean.json");
+
+    await writeFile(
+      timeoutConfigPath,
+      JSON.stringify({ intent: { timeoutMs: 0 } }),
+    );
+    await writeFile(
+      booleanConfigPath,
+      JSON.stringify({ intent: { elevateConfirm: "true" } }),
+    );
+
+    try {
+      await expect(
+        loadConfig({ configPath: timeoutConfigPath, env: {} }),
+      ).rejects.toThrow("intent.timeoutMs must be a positive integer");
+      await expect(
+        loadConfig({ configPath: booleanConfigPath, env: {} }),
+      ).rejects.toThrow("intent.elevateConfirm must be a boolean");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   test("validates preview config shape without validating individual specs", async () => {

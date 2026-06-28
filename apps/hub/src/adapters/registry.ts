@@ -13,7 +13,11 @@ const sourceToAdapterId: Record<string, string> = {
   "claude-code": "claude-code",
   webhook: "webhook",
   codex: "codex",
+  opencode: "opencode",
+  cursor: "cursor",
 };
+
+const observeOnlyNoActionAdapters = new Set(["codex", "opencode", "cursor"]);
 
 export class AdapterRegistry {
   private adapters = new Map<string, Adapter>();
@@ -68,7 +72,13 @@ export class AdapterRegistry {
       return { ok: false, message: "No adapter for item source" };
     }
 
-    if (!this.hasAction(adapter.listActions(itemId), actionId)) {
+    const actions = adapter.listActions(itemId);
+
+    if (actions.length === 0 && observeOnlyNoActionAdapters.has(adapter.id)) {
+      return adapter.runAction(itemId, actionId, payload);
+    }
+
+    if (!this.hasAction(actions, actionId)) {
       return { ok: false, message: "Unknown action" };
     }
 

@@ -1,0 +1,8 @@
+{
+  "type": "statusChange",
+  "statusChange": "FINISHED",
+  "agentId": "agent-finished-1",
+  "project": "aspex",
+  "summary": "Cursor agent finished its task",
+  "deepLink": "cursor://agent/agent-finished-1"
+}

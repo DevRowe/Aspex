@@ -13,13 +13,27 @@ export type Source =
   | "github"
   | "claude-code"
   | "codex"
+  | "opencode"
+  | "cursor"
   | "webhook"
   | "ntfy"
   | "mcp";
 ```
 
-Phase 0 implements GitHub, Claude Code, mock, webhook, and ntfy behavior. Codex
-and MCP are schema-level provisions for later adapters.
+Phase 3 Sources are:
+
+- `github`
+- `claude-code`
+- `codex`
+- `opencode`
+- `cursor`
+- `webhook`
+- `ntfy`
+- `mcp`
+
+Phase 0 implements GitHub, Claude Code, mock, webhook, and ntfy behavior. Phase
+3 adds observe-only codex, opencode, and cursor adapters. MCP remains a
+schema-level provision.
 
 ## Stable Item Ids
 
@@ -30,6 +44,9 @@ Examples:
 
 - `github:pr:owner/repo#42`
 - `claude-code:session:<uuid>`
+- `codex:session:<id>`
+- `opencode:session:<id>`
+- `cursor:agent:<id>`
 - `webhook:<key>`
 
 Helpers in `packages/schema/src/ids.ts` create common ids:
@@ -37,6 +54,7 @@ Helpers in `packages/schema/src/ids.ts` create common ids:
 ```ts
 githubPrId(repo, number);
 claudeSessionId(sessionId);
+codexSessionId(sessionId);
 webhookId(key);
 parseItemId(id);
 ```
@@ -194,6 +212,7 @@ export type ClientDirective =
   | { type: "select"; id: ItemId }
   | { type: "move"; delta: 1 | -1 }
   | { type: "show_needs_me" }
+  | { type: "open"; id: ItemId }
   | { type: "none" };
 
 export interface VoiceSession {
@@ -231,8 +250,8 @@ is reviewable, but clients do not send intents.
 
 `ClientDirective` is an optional UI effect returned by the Hub. `select` focuses
 an Item, `move` changes selection by one row in the needs-me list,
-`show_needs_me` tells the client to show the needs-me view, and `none` is a
-no-op directive.
+`show_needs_me` tells the client to show the needs-me view, `open` asks the
+client to open the Item's deep-link, and `none` is a no-op directive.
 
 `VoiceSession` is mirrored in responses so the client can display pending
 confirmation or Dictation mode. `pendingBody` is present after the Hub has read
@@ -240,6 +259,80 @@ back a dictated body and before `post it`/`send it`.
 
 `VoiceResult.ok` is false for no-match and gateway error read-backs. `readback`
 is always present. `audioUrl` is present only when TTS produced cached WAV bytes.
+
+## Free-Form Intent Contract
+
+The canonical Phase 3 intent types live in `packages/schema/src/intent.ts`.
+They wrap the Voice `Intent` union instead of replacing it.
+
+```ts
+export type IntentSource = "grammar" | "freeform";
+
+export interface IntentCandidate {
+  itemId: ItemId;
+  summary: string;
+  actions: string[];
+}
+
+export interface IntentRequest {
+  text: string;
+  context: VoiceContext;
+  candidates: IntentCandidate[];
+}
+
+export interface IntentResult {
+  intent: Intent;
+  source: "freeform";
+}
+
+export interface FreeformConfig {
+  enabled: boolean;
+  endpoints: string[];
+  model: string;
+  timeoutMs: number;
+  elevateConfirm: boolean;
+}
+```
+
+`IntentRequest.text` is the spoken or typed command that the closed grammar did
+not match. `context` carries the selected Item and visible needs-me ids.
+`candidates` is the enum-ready view of live Items and their action ids.
+
+`IntentResult.intent` must be a first-stage Intent: `nav`, `read`, `open`,
+`action`, `dictate`, or `no_match` with reason `unknown_command`. The result may
+not contain `confirm`, `dictation_body`, `post`, or `cancel`.
+
+## `/intent`
+
+`POST /intent` accepts JSON:
+
+```ts
+interface IntentHttpBody {
+  text: string;
+  context: VoiceContext;
+}
+```
+
+The Hub runs the same grammar-first pipeline used by voice and returns
+`VoiceResult` JSON. The route returns `503` when free-form intent is disabled or
+the gateway is not configured. Validation failures return HTTP 400.
+
+The Intent bar is the shipped typed client for this endpoint.
+
+## Phase 3 Agent Source Mappings
+
+Codex, opencode, and cursor are observe-only and deep-link-only in Phase 3.
+They own agent-local attention only; PR lifecycle attention remains owned by
+`github`.
+
+| Source | Item id | Ingestion | Attention mapping |
+| --- | --- | --- | --- |
+| `codex` | `codex:session:<id>` | `notify` to `aspex hook-relay`, then local Hub Signal | current `agent-turn-complete` payloads map to `done`/`ambient` |
+| `opencode` | `opencode:session:<id>` | local `opencode serve` `/event` SSE subscription | `blocked_on_human` for blocked; `errored` for error; otherwise `ambient` |
+| `cursor` | `cursor:agent:<id>` | opt-in signed `statusChange` webhook | `errored` for error payloads; otherwise `ambient` |
+
+Use reason `errored`, not `error`. `error` is a `State`; `errored` is the
+ranking `Reason`.
 
 ## `/voice/utterance`
 

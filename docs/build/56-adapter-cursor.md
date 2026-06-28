@@ -31,7 +31,7 @@ Cursor sends `statusChange` for **ERROR / FINISHED** only.
 
 | statusChange | Item | State / Reason |
 |---|---|---|
-| `ERROR` | `cursor:agent:<id>` | `state: error`, `reason: error`, attentionRequired, `deepLink` (cursor agent/PR url) |
+| `ERROR` | `cursor:agent:<id>` | `state: error`, `reason: errored`, attentionRequired, `deepLink` (cursor agent/PR url) |
 | `FINISHED` | `cursor:agent:<id>` | `state: done`, **Ambient** (the PR, if any, is **github**'s — ADR-0002) |
 
 So cursor surfaces **ERROR as needs-me** and **FINISHED as Ambient** + a deep-link.

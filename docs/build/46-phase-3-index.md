@@ -135,7 +135,7 @@ export interface IntentService {
 
 | Source | Ingestion | Owns | v1 control |
 |---|---|---|---|
-| `codex` | `notify` → `aspex hook-relay` → `POST /signals/codex` | agent-local `working`/`blocked`/`error` (pre-PR) | **deep-link only** |
+| `codex` | `notify` → `aspex hook-relay` → `POST /signals/codex` | current `agent-turn-complete` payloads map to `done`/Ambient + heartbeat | **deep-link only** |
 | `opencode` | subscribe `opencode serve` `/event` SSE | agent-local session state | **deep-link only** |
 | `cursor` | opt-in inbound `statusChange` webhook (signed) | agent-local `error`/`finished` | **deep-link only** |
 

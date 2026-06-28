@@ -1,3 +1,8 @@
+import {
+  CURSOR_SIGNATURE_HEADER,
+  mapCursorStatusChangeToSignal,
+  verifyCursorSignature,
+} from "@aspex/adapter-cursor";
 import { normalizeWebhookBody } from "@aspex/adapter-webhook";
 import type { ActionResult, Source } from "@aspex/schema";
 import { assertSignal } from "@aspex/schema";
@@ -34,6 +39,14 @@ export interface ServerDeps {
     stt: "mock" | "http";
     tts: boolean;
   };
+  intent?: {
+    enabled: boolean;
+    mock: boolean;
+  };
+  cursorWebhook?: {
+    enabled: boolean;
+    secret?: string;
+  };
   previews?: {
     enabled: boolean;
     broker?: PreviewBroker;
@@ -69,10 +82,15 @@ export function buildApp(deps: ServerDeps): Hono {
           deps.previews.broker !== undefined &&
           deps.previews.registry !== undefined,
       },
+      intentEnabled: deps.intent?.enabled === true,
+      intent: {
+        enabled: deps.intent?.enabled === true,
+      },
     }),
   );
 
   registerVoiceRoutes(app, deps);
+  registerCursorWebhookRoute(app, deps);
   const previewDeps =
     deps.previews?.enabled === true &&
     deps.previews.broker !== undefined &&
@@ -167,6 +185,46 @@ export function buildApp(deps: ServerDeps): Hono {
   });
 
   return app;
+}
+
+function registerCursorWebhookRoute(app: Hono, deps: ServerDeps): void {
+  if (deps.cursorWebhook?.enabled !== true) {
+    return;
+  }
+
+  app.post("/webhooks/cursor", async (c) => {
+    const rawBody = await c.req.text();
+    const signature = c.req.header(CURSOR_SIGNATURE_HEADER);
+
+    if (
+      !verifyCursorSignature({
+        secret: deps.cursorWebhook?.secret,
+        rawBody,
+        signature,
+      })
+    ) {
+      return c.json({ message: "Invalid cursor signature" }, 401);
+    }
+
+    let body: unknown;
+    try {
+      body = JSON.parse(rawBody);
+    } catch (error) {
+      return c.json({ message: validationMessage(error) }, 400);
+    }
+
+    const signal = mapCursorStatusChangeToSignal(body);
+
+    if (signal === null) {
+      return c.json({ message: "Invalid cursor webhook body" }, 400);
+    }
+
+    deps.worldModel.applySignal(
+      signal as unknown as Parameters<typeof deps.worldModel.applySignal>[0],
+    );
+
+    return c.json({ accepted: true }, 202);
+  });
 }
 
 function stateSnapshot(deps: ServerDeps) {

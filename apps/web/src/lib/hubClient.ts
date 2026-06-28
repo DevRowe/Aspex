@@ -22,6 +22,10 @@ export interface HubClientConfig {
   previews?: {
     enabled?: boolean;
   };
+  intentEnabled?: boolean;
+  intent?: {
+    enabled?: boolean;
+  };
 }
 
 export async function connect(

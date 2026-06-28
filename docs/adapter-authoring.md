@@ -40,6 +40,9 @@ Use these patterns unless an ADR introduces a better source-specific shape:
 
 - GitHub PR: `github:pr:<owner>/<repo>#<number>`
 - Claude Code session: `claude-code:session:<uuid>`
+- Codex session: `codex:session:<id>`
+- OpenCode session: `opencode:session:<id>`
+- Cursor agent: `cursor:agent:<id>`
 - Webhook item: `webhook:<key>`
 
 Prefer helpers from `packages/schema/src/ids.ts`.
@@ -86,6 +89,48 @@ Dangerous actions require confirmation at the HTTP layer before dispatch.
 When no safe action path exists, provide a `deepLink` instead. Claude Code is
 read-only in Phase 0 by ADR-0004, so it returns no actions and points the user
 back to their terminal/session.
+
+Codex, opencode, and cursor are observe-only in Phase 3 by ADR-0021 and
+ADR-0022. They must expose no control actions. `listActions` returns `[]`, and
+`runAction` must reject any attempted action. Use deep-links or source-local
+instructions to send the user back to the relevant agent UI.
+
+## Phase 3 Ingestion Patterns
+
+### Notify Relay
+
+Use this for CLI tools that can run a local notification command when session
+or turn events are available. Codex follows this pattern.
+
+The tool calls `aspex hook-relay --source codex ...`, and the relay posts to the
+local Hub. The current Codex notify payload maps completed turns to
+`done`/`ambient` Items. Keep the relay data-only: translate the notification
+payload into a Signal, attach evidence and a deep-link when available, and never
+execute agent-authored text.
+
+### Local SSE Subscription
+
+Use this for tools that expose a local event stream. OpenCode follows this
+pattern by subscribing to `opencode serve` `/event`.
+
+The adapter should treat stream events as observations, emit Signals for
+session state, and heartbeat only while the stream is fresh. If the stream
+disconnects or the local server is unavailable, do not synthesize healthy
+liveness.
+
+### Signed Webhook Ingestion
+
+Use this only when the source cannot provide a local poll or hook path. Cursor
+follows this pattern for `statusChange` webhooks.
+
+Webhook adapters must be opt-in, default off, and signature-verified. They must
+fail closed when the secret is absent or the signature is invalid. Do not expose
+the Hub publicly from adapter code. The Hub binds `127.0.0.1`; any tunnel or
+Funnel that lets a cloud webhook reach it is a deliberate user deployment
+choice.
+
+Signed cloud-origin webhooks should emit observe-only Signals and deep-links.
+They must not imply that Aspex can control the cloud agent.
 
 ## Webhook Contract
 
@@ -137,4 +182,6 @@ curl -X POST http://127.0.0.1:4317/signals/webhook \
 - [ADR-0002: Attention is partitioned by lifecycle stage](adr/0002-attention-partitioned-by-lifecycle-stage.md)
 - [ADR-0003: Two-track liveness](adr/0003-two-track-liveness-poll-health-vs-heartbeats.md)
 - [ADR-0004: Phase 0 Claude Code is read-only](adr/0004-phase0-claude-code-is-read-only.md)
+- [ADR-0021: Phase 3 agent adapters are observe-only](adr/0021-phase3-agent-adapters-are-observe-only-and-own-agent-local-attention.md)
+- [ADR-0022: Cursor webhook bounded exception](adr/0022-cursor-webhook-bounded-exception.md)
 - [Event schema](event-schema.md)
