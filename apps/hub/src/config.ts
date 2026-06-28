@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import type { Severity } from "@aspex/schema";
+import type { PreviewSpec, Severity } from "@aspex/schema";
 import type { LivenessConfig } from "./engine/liveness";
 
 export interface AspexConfig {
@@ -14,6 +14,7 @@ export interface AspexConfig {
   ntfy?: { server?: string; topic: string; minSeverity?: "medium" | "high" };
   liveness?: Partial<LivenessConfig>;
   voice?: VoiceConfig;
+  previews?: PreviewConfig;
   mock?: boolean;
 }
 
@@ -27,8 +28,20 @@ export interface VoiceConfig {
   mock?: boolean;
 }
 
+export interface PreviewConfig {
+  enabled: boolean;
+  engine: "docker" | "mock";
+  maxConcurrent: number;
+  limits: {
+    cpus: string;
+    memory: string;
+    idleTtlSec: number;
+  };
+  specs: PreviewSpec[];
+}
+
 type ConfigFile = Partial<
-  Omit<AspexConfig, "github" | "ntfy" | "liveness" | "voice">
+  Omit<AspexConfig, "github" | "ntfy" | "liveness" | "voice" | "previews">
 > & {
   github?: Partial<AspexConfig["github"]>;
   ntfy?: Partial<AspexConfig["ntfy"]>;
@@ -36,6 +49,9 @@ type ConfigFile = Partial<
   voice?: Partial<Omit<VoiceConfig, "stt" | "tts">> & {
     stt?: Partial<VoiceConfig["stt"]>;
     tts?: Partial<VoiceConfig["tts"]>;
+  };
+  previews?: Partial<Omit<PreviewConfig, "limits">> & {
+    limits?: Partial<PreviewConfig["limits"]>;
   };
 };
 
@@ -51,12 +67,21 @@ const DEFAULT_VOICE_CONFIG: VoiceConfig = {
   pttKey: "Space",
 };
 
+const DEFAULT_PREVIEW_CONFIG: PreviewConfig = {
+  enabled: false,
+  engine: "docker",
+  maxConcurrent: 3,
+  limits: { cpus: "1", memory: "512m", idleTtlSec: 600 },
+  specs: [],
+};
+
 export const DEFAULT_CONFIG: AspexConfig = {
   hubPort: 4317,
   dbPath: "~/.aspex/aspex.sqlite",
   needsMeCap: 7,
   pollIntervalMs: 60_000,
   voice: DEFAULT_VOICE_CONFIG,
+  previews: DEFAULT_PREVIEW_CONFIG,
   liveness: {
     pollGraceMs: 90_000,
     heartbeatGraceMs: 120_000,
@@ -141,6 +166,7 @@ function mergeConfig(base: AspexConfig, override: ConfigFile): AspexConfig {
     ntfy: mergeOptionalObject(base.ntfy, override.ntfy),
     liveness: mergeOptionalObject(base.liveness, override.liveness),
     voice: mergeVoiceConfig(base.voice, override.voice),
+    previews: mergePreviewConfig(base.previews, override.previews),
   };
 }
 
@@ -190,6 +216,34 @@ function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
   const voicePttKey =
     env.ASPEX_VOICE_PTT_KEY !== undefined
       ? optionalNonEmptyEnv(env.ASPEX_VOICE_PTT_KEY, "ASPEX_VOICE_PTT_KEY")
+      : undefined;
+  const previewsEnabled =
+    env.ASPEX_PREVIEWS_ENABLED !== undefined
+      ? parseBoolean(
+          env.ASPEX_PREVIEWS_ENABLED,
+          cfg.previews?.enabled,
+          "ASPEX_PREVIEWS_ENABLED",
+        )
+      : undefined;
+  const previewsEngine =
+    env.ASPEX_PREVIEWS_ENGINE !== undefined
+      ? parsePreviewEngine(env.ASPEX_PREVIEWS_ENGINE)
+      : undefined;
+  const previewsMaxConcurrent =
+    env.ASPEX_PREVIEWS_MAX_CONCURRENT !== undefined
+      ? parseInteger(
+          env.ASPEX_PREVIEWS_MAX_CONCURRENT,
+          cfg.previews?.maxConcurrent,
+          "ASPEX_PREVIEWS_MAX_CONCURRENT",
+        )
+      : undefined;
+  const previewsIdleTtlSec =
+    env.ASPEX_PREVIEWS_IDLE_TTL_SEC !== undefined
+      ? parseInteger(
+          env.ASPEX_PREVIEWS_IDLE_TTL_SEC,
+          cfg.previews?.limits.idleTtlSec,
+          "ASPEX_PREVIEWS_IDLE_TTL_SEC",
+        )
       : undefined;
   const github =
     githubToken !== undefined ||
@@ -242,6 +296,28 @@ function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
         },
       }
     : cfg.voice;
+  const hasPreviewEnv =
+    previewsEnabled !== undefined ||
+    previewsEngine !== undefined ||
+    previewsMaxConcurrent !== undefined ||
+    previewsIdleTtlSec !== undefined;
+  const previewBase = cfg.previews ?? DEFAULT_PREVIEW_CONFIG;
+  const previews = hasPreviewEnv
+    ? {
+        ...previewBase,
+        ...(previewsEnabled !== undefined ? { enabled: previewsEnabled } : {}),
+        ...(previewsEngine !== undefined ? { engine: previewsEngine } : {}),
+        ...(previewsMaxConcurrent !== undefined
+          ? { maxConcurrent: previewsMaxConcurrent }
+          : {}),
+        limits: {
+          ...previewBase.limits,
+          ...(previewsIdleTtlSec !== undefined
+            ? { idleTtlSec: previewsIdleTtlSec }
+            : {}),
+        },
+      }
+    : cfg.previews;
 
   return {
     ...cfg,
@@ -262,6 +338,7 @@ function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
     ntfy,
     mock: parseBoolean(env.ASPEX_MOCK, cfg.mock, "ASPEX_MOCK"),
     voice,
+    previews,
     liveness: {
       ...cfg.liveness,
       pollGraceMs: parseInteger(
@@ -298,6 +375,7 @@ function normalizeConfig(cfg: AspexConfig): AspexConfig {
     ...cfg,
     dbPath: expandHome(cfg.dbPath),
     voice: normalizeVoiceConfig(cfg.voice, cfg.mock),
+    previews: normalizePreviewConfig(cfg.previews),
   };
 
   if (normalized.github !== undefined) {
@@ -313,6 +391,62 @@ function normalizeConfig(cfg: AspexConfig): AspexConfig {
   }
 
   return normalized;
+}
+
+function normalizePreviewConfig(
+  previews: PreviewConfig | undefined,
+): PreviewConfig {
+  const normalized = mergePreviewConfig(DEFAULT_CONFIG.previews, previews);
+
+  if (normalized === undefined) {
+    throw new Error("previews config defaults are missing");
+  }
+
+  if (normalized.engine !== "docker" && normalized.engine !== "mock") {
+    throw new Error("previews.engine must be docker or mock");
+  }
+
+  if (typeof normalized.enabled !== "boolean") {
+    throw new Error("previews.enabled must be a boolean");
+  }
+
+  if (
+    !Number.isInteger(normalized.maxConcurrent) ||
+    normalized.maxConcurrent <= 0
+  ) {
+    throw new Error("previews.maxConcurrent must be a positive integer");
+  }
+
+  if (
+    typeof normalized.limits.cpus !== "string" ||
+    normalized.limits.cpus.trim() === ""
+  ) {
+    throw new Error("previews.limits.cpus must be a non-empty string");
+  }
+
+  if (
+    typeof normalized.limits.memory !== "string" ||
+    normalized.limits.memory.trim() === ""
+  ) {
+    throw new Error("previews.limits.memory must be a non-empty string");
+  }
+
+  if (
+    !Number.isInteger(normalized.limits.idleTtlSec) ||
+    normalized.limits.idleTtlSec <= 0
+  ) {
+    throw new Error("previews.limits.idleTtlSec must be a positive integer");
+  }
+
+  if (!Array.isArray(normalized.specs)) {
+    throw new Error("previews.specs must be an array");
+  }
+
+  return {
+    ...normalized,
+    limits: { ...normalized.limits },
+    specs: [...normalized.specs],
+  };
 }
 
 function normalizeVoiceConfig(
@@ -473,6 +607,14 @@ function parseNtfySeverity(raw: string): Extract<Severity, "medium" | "high"> {
   throw new Error("ASPEX_NTFY_MIN_SEVERITY must be medium or high");
 }
 
+function parsePreviewEngine(raw: string): PreviewConfig["engine"] {
+  if (raw === "docker" || raw === "mock") {
+    return raw;
+  }
+
+  throw new Error("ASPEX_PREVIEWS_ENGINE must be docker or mock");
+}
+
 function parseCsv(raw: string | undefined): string[] | undefined {
   if (raw === undefined) {
     return undefined;
@@ -547,6 +689,25 @@ function mergeVoiceConfig(
       ...override.tts,
     },
   } as VoiceConfig;
+}
+
+function mergePreviewConfig(
+  base: PreviewConfig | undefined,
+  override: ConfigFile["previews"] | undefined,
+): PreviewConfig | undefined {
+  if (override === undefined) {
+    return base;
+  }
+
+  return {
+    ...(base ?? DEFAULT_PREVIEW_CONFIG),
+    ...override,
+    limits: {
+      ...(base?.limits ?? DEFAULT_PREVIEW_CONFIG.limits),
+      ...override.limits,
+    },
+    specs: override.specs ?? base?.specs ?? DEFAULT_PREVIEW_CONFIG.specs,
+  } as PreviewConfig;
 }
 
 function voiceContractUrl(

@@ -1,3 +1,4 @@
+import type { Preview } from "@aspex/schema";
 import { useStore } from "../store";
 import type { ActionResult } from "../types";
 import type { RankedState } from "../types";
@@ -13,7 +14,19 @@ interface TauriGlobals {
   };
 }
 
-export async function connect(): Promise<EventSource> {
+export interface HubStreamOptions {
+  onPreview?: (preview: Preview) => void;
+}
+
+export interface HubClientConfig {
+  previews?: {
+    enabled?: boolean;
+  };
+}
+
+export async function connect(
+  options: HubStreamOptions = {},
+): Promise<EventSource> {
   const hub = await getHubUrl();
   const stream = new EventSource(`${hub}/stream`);
 
@@ -22,6 +35,11 @@ export async function connect(): Promise<EventSource> {
       (event as MessageEvent<string>).data,
     ) as RankedState;
     useStore.getState().setState(state);
+  });
+  stream.addEventListener("preview", (event) => {
+    options.onPreview?.(
+      JSON.parse((event as MessageEvent<string>).data) as Preview,
+    );
   });
 
   stream.onopen = () => useStore.getState().setConnected(true);
@@ -54,6 +72,17 @@ export async function runAction(
     ok: response.ok && body.ok !== false,
     message: body.message ?? response.statusText,
   };
+}
+
+export async function getHubConfig(): Promise<HubClientConfig> {
+  const hub = await getHubUrl();
+  const response = await fetch(`${hub}/config`);
+
+  if (!response.ok) {
+    throw new Error(`Hub config unavailable: ${response.status}`);
+  }
+
+  return (await response.json()) as HubClientConfig;
 }
 
 export async function getHubUrl(): Promise<string> {

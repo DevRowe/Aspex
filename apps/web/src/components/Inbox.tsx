@@ -1,5 +1,7 @@
 import type { VoiceResult } from "@aspex/schema";
 import { useCallback, useState } from "react";
+import { Deck } from "../preview/Deck";
+import { usePreviewStore } from "../preview/usePreviews";
 import { useStore } from "../store";
 import { applyDirective } from "../voice/applyDirective";
 import type { PushToTalkPhase } from "../voice/usePushToTalk";
@@ -24,6 +26,7 @@ export function Inbox() {
   const voiceLastOk = useVoiceStore((state) => state.lastOk);
   const voiceSession = useVoiceStore((state) => state.session);
   const voiceError = useVoiceStore((state) => state.error);
+  const previewsEnabled = usePreviewStore((state) => state.enabled);
   const [showOverflow, setShowOverflow] = useState(false);
   const visibleNeedsMe = showOverflow ? [...needsMe, ...overflow] : needsMe;
   const selectedItem =
@@ -145,6 +148,8 @@ export function Inbox() {
                 {showOverflow ? "Show fewer" : `Show ${overflow.length} more`}
               </button>
             ) : null}
+
+            {previewsEnabled ? <Deck /> : null}
 
             <AmbientList items={ambient} />
           </div>

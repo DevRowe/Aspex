@@ -5,8 +5,11 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { Bus } from "../bus";
 import { rank } from "../engine/attention";
+import type { PreviewBroker } from "../preview/broker";
+import type { PreviewRegistry } from "../preview/registry";
 import type { VoiceGateway } from "../voice/gateway";
 import type { WorldModel } from "../world/worldModel";
+import { registerPreviewRoutes, subscribePreviewEvents } from "./preview";
 import { createStateStream } from "./sse";
 import { registerVoiceRoutes } from "./voice";
 
@@ -31,6 +34,11 @@ export interface ServerDeps {
     stt: "mock" | "http";
     tts: boolean;
   };
+  previews?: {
+    enabled: boolean;
+    broker?: PreviewBroker;
+    registry?: PreviewRegistry;
+  };
 }
 
 export function buildApp(deps: ServerDeps): Hono {
@@ -47,8 +55,39 @@ export function buildApp(deps: ServerDeps): Hono {
   );
 
   app.get("/health", (c) => c.json({ ok: true, version: deps.version }));
+  app.get("/config", (c) =>
+    c.json({
+      voice: deps.voice ?? {
+        enabled: false,
+        pttKey: "Space",
+        stt: "http",
+        tts: false,
+      },
+      previews: {
+        enabled:
+          deps.previews?.enabled === true &&
+          deps.previews.broker !== undefined &&
+          deps.previews.registry !== undefined,
+      },
+    }),
+  );
 
   registerVoiceRoutes(app, deps);
+  const previewDeps =
+    deps.previews?.enabled === true &&
+    deps.previews.broker !== undefined &&
+    deps.previews.registry !== undefined
+      ? {
+          broker: deps.previews.broker,
+          registry: deps.previews.registry,
+          bus: deps.bus,
+        }
+      : undefined;
+
+  if (previewDeps !== undefined) {
+    registerPreviewRoutes(app, previewDeps);
+    subscribePreviewEvents(previewDeps);
+  }
 
   app.get("/state", (c) => c.json(stateSnapshot(deps)));
 
@@ -59,6 +98,18 @@ export function buildApp(deps: ServerDeps): Hono {
         deps.bus.on("world:changed", sendState);
         return () => deps.bus.off("world:changed", sendState);
       },
+      events:
+        previewDeps === undefined
+          ? []
+          : [
+              {
+                event: "preview",
+                subscribe: (sendPreview) => {
+                  deps.bus.on("preview", sendPreview);
+                  return () => deps.bus.off("preview", sendPreview);
+                },
+              },
+            ],
     });
 
     return c.body(stream, 200, {

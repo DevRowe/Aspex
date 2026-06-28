@@ -1,7 +1,7 @@
 # Dependency License Registry
 
 Aspex core is licensed under Apache-2.0. This registry tracks the dependency
-license posture for the shipped core through Phase 1.
+license posture for the shipped core through Phase 2.
 
 As of this registry, the shipped core has no AGPL or GPL dependencies.
 
@@ -46,6 +46,12 @@ of the Bun runtime/toolchain rather than npm dependencies vendored by this repo.
 Browser audio capture uses built-in Web APIs (`getUserMedia`,
 `MediaRecorder`, and `HTMLAudioElement`), not a JavaScript package dependency.
 
+Preview Deck uses existing browser primitives: `iframe`, `fetch`, and the
+existing Hub SSE stream. It adds no npm runtime dependency. The Docker Preview
+engine invokes the host's `docker` command-line tool as an optional external
+capability; Aspex does not link a Docker SDK, native addon, daemon library, or
+vendored Docker component.
+
 ## Rust / Tauri
 
 | Dependency | Use | License |
@@ -86,11 +92,21 @@ Real STT/TTS mode is host-provisioned and optional:
 - `ffmpeg` may be used by the Parakeet wrapper to normalize browser audio before
   transcription. It is an external host tool, not vendored into the core app.
 
+## Deferred Preview Components
+
+The untrusted pixels lane is not shipped in Phase 2. Components discussed for
+that lane, including neko/WebRTC streaming, screenshot streaming helpers, and
+`model-viewer` or other glTF/AR rendering packages, have not been added to the
+core dependency graph. Review their licenses before any later ADR or card adds
+them.
+
 ## Policy
 
 - Prefer Apache-2.0, MIT, BSD, or ISC dependencies.
 - Do not add AGPL/GPL dependencies to the shipped core.
 - Keep Hub dependencies Bun-compile-safe; avoid Node-native addons.
+- Keep Docker and other Preview engines as CLI tools, services, or pluggable
+  boundaries unless a later ADR explicitly changes that boundary.
 - Keep model/tooling components for voice as separate services or host tools
   unless a later ADR explicitly changes that boundary.
 - Update this file in the same change as any dependency add, removal, or major

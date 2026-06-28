@@ -5,10 +5,15 @@ import {
   runHookRelay,
   uninstallClaudeCodeHooks,
 } from "@aspex/adapter-claude-code";
+import type { Preview } from "@aspex/schema";
 import { VERSION, buildHub } from "./boot";
-import { type VoiceConfig, loadConfig } from "./config";
+import { type PreviewConfig, type VoiceConfig, loadConfig } from "./config";
+import type { PreviewEngine } from "./preview/engine";
+import { createDockerEngine } from "./preview/engineDocker";
+import { createMockEngine } from "./preview/engineMock";
+import { loadPreviewRegistry } from "./preview/registry";
 
-type Command = "hub" | "up" | "hooks" | "hook-relay" | "voice";
+type Command = "hub" | "up" | "hooks" | "hook-relay" | "voice" | "preview";
 
 const HELP = `aspex ${VERSION}
 
@@ -16,11 +21,14 @@ Usage:
   aspex hub [--config <path>] [--mock]
   aspex up [--config <path>] [--mock]
   aspex voice check [--config <path>]
+  aspex preview check [--config <path>] [--engine docker|mock]
+  aspex preview list [--config <path>]
   aspex hooks install|uninstall
   aspex hook-relay --event <Name>
 
 Options:
   --config <path>  Load a JSON config file
+  --engine <kind>  Override preview engine for preview check
   --mock           Enable mock mode when available
   --help           Print help
   --version        Print version
@@ -33,6 +41,7 @@ async function main(argv: string[]): Promise<void> {
     options: {
       config: { type: "string" },
       event: { type: "string" },
+      engine: { type: "string" },
       help: { type: "boolean", short: "h" },
       mock: { type: "boolean" },
       version: { type: "boolean", short: "v" },
@@ -81,6 +90,20 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
 
+  if (command === "preview") {
+    await runPreviewCommand(parsed.positionals.slice(1), {
+      configPath:
+        typeof parsed.values.config === "string"
+          ? parsed.values.config
+          : undefined,
+      engine:
+        typeof parsed.values.engine === "string"
+          ? parsed.values.engine
+          : undefined,
+    });
+    return;
+  }
+
   if (command === "hook-relay") {
     await runRelayCommand({
       configPath:
@@ -98,6 +121,136 @@ async function main(argv: string[]): Promise<void> {
   console.error(`Unknown command: ${String(command)}`);
   console.log(HELP);
   process.exitCode = 1;
+}
+
+export async function runPreviewCommand(
+  args: string[],
+  options: { configPath?: string; engine?: string } = {},
+): Promise<void> {
+  const action = args[0];
+
+  if (action === "check") {
+    await runPreviewCheck(options);
+    return;
+  }
+
+  if (action === "list") {
+    await runPreviewList(options);
+    return;
+  }
+
+  console.error("Usage: aspex preview check|list [--config <path>]");
+  process.exitCode = 1;
+}
+
+async function runPreviewCheck(options: {
+  configPath?: string;
+  engine?: string;
+}): Promise<void> {
+  const cfg = await loadConfig({ configPath: options.configPath });
+  const previews = cfg.previews;
+
+  if (previews?.enabled !== true) {
+    console.log("previews disabled");
+    return;
+  }
+
+  const engineKind =
+    options.engine === undefined
+      ? previews.engine
+      : parseCliPreviewEngine(options.engine);
+  const effectivePreviews = { ...previews, engine: engineKind };
+  const engine = createCliPreviewEngine(engineKind);
+  const engineAvailable = await engine.available();
+  const { registry, errors } = loadPreviewRegistry(effectivePreviews.specs);
+
+  console.log("Preview Deck: enabled");
+  console.log(
+    `Engine: ${engineKind} (${engineAvailable ? "available" : "unavailable"})`,
+  );
+
+  for (const error of errors) {
+    console.log(
+      `SKIP spec[${error.index}]${
+        error.specId === undefined ? "" : ` ${error.specId}`
+      }: ${error.message}`,
+    );
+  }
+
+  const specs = registry.list();
+  if (specs.length === 0) {
+    console.log("No valid Preview specs configured.");
+    return;
+  }
+
+  for (const spec of specs) {
+    const reason = previewBootabilityReason({
+      trust: spec.trust,
+      engineAvailable,
+      engineKind: effectivePreviews.engine,
+    });
+    console.log(`${spec.id}\t${spec.trust}\t${reason}`);
+  }
+}
+
+async function runPreviewList(options: { configPath?: string }): Promise<void> {
+  const cfg = await loadConfig({ configPath: options.configPath });
+  const response = await fetch(`http://127.0.0.1:${cfg.hubPort}/previews`);
+
+  if (response.status === 404) {
+    console.log("Preview Deck disabled or unavailable on the running Hub.");
+    return;
+  }
+
+  if (!response.ok) {
+    console.error(
+      `Preview list failed: ${response.status} ${response.statusText}`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  const previews = (await response.json()) as Preview[];
+  if (previews.length === 0) {
+    console.log("No live previews.");
+    return;
+  }
+
+  for (const preview of previews) {
+    console.log(
+      `${preview.previewId}\t${preview.specId}\t${preview.state}\t${
+        preview.url ?? ""
+      }`,
+    );
+  }
+}
+
+function previewBootabilityReason(args: {
+  trust: "trusted" | "untrusted";
+  engineAvailable: boolean;
+  engineKind: PreviewConfig["engine"];
+}): string {
+  if (args.trust === "untrusted") {
+    return "not bootable (pixels lane n/a)";
+  }
+
+  if (!args.engineAvailable) {
+    return `not bootable (${args.engineKind} engine unavailable)`;
+  }
+
+  return "bootable";
+}
+
+function createCliPreviewEngine(kind: PreviewConfig["engine"]): PreviewEngine {
+  return kind === "mock" ? createMockEngine() : createDockerEngine();
+}
+
+function parseCliPreviewEngine(raw: string): PreviewConfig["engine"] {
+  if (raw === "docker" || raw === "mock") {
+    return raw;
+  }
+
+  throw new Error("--engine must be docker or mock");
 }
 
 async function runVoiceCommand(

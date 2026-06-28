@@ -1,8 +1,9 @@
 import { EventEmitter } from "node:events";
-import type { AttentionItem } from "@aspex/schema";
+import type { AttentionItem, Preview } from "@aspex/schema";
 
 export type HubEvents = {
   "world:changed": { upserted: AttentionItem[]; removed: string[] };
+  preview: Preview;
 };
 
 export class Bus {

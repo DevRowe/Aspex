@@ -1,8 +1,8 @@
 # Threat Model
 
-This document describes the security stance as shipped through Phase 1. It is
+This document describes the security stance as shipped through Phase 2. It is
 scoped to the local Hub, web cockpit, desktop shell, Phase 0 adapters, and the
-Phase 1 flat voice loop.
+Phase 1 flat voice loop, and the Phase 2 Preview Deck.
 
 ## Security Goals
 
@@ -107,15 +107,53 @@ memory behind `/voice/audio/:id` for about one minute with Cache-Control
 no-store semantics. Text read-back and Voice session state are returned to the
 client so the UI can show status and pending confirmation/dictation.
 
+## Preview Deck (Phase 2)
+
+Preview Deck is opt-in and off by default. When disabled, the Hub does not mount
+Preview routes and the Phase 0/1 world-model is unchanged.
+
+The Deck boots declared Preview specs only. Specs come from local `~/.aspex`
+configuration in v1; Aspex never builds images, checks out branches, computes
+commands, or infers what to run. Pulling a declared image is allowed; building
+is not. This is the ADR-0014 boundary that keeps the feature on the
+consume-not-orchestrate side.
+
+A Preview is ephemeral and never world-model state. It is not an Item, does not
+enter needs-me, is not ranked, and is not persisted as attention state. Booting
+is always an explicit user action, following ADR-0015.
+
+v1 ships only the trusted-iframe Trust lane. Trusted specs render at their own
+`http://127.0.0.1:<allocated-port>` origin inside:
+
+```html
+sandbox="allow-scripts allow-forms allow-same-origin"
+referrerpolicy="no-referrer"
+allow=""
+```
+
+The iframe deliberately withholds `allow-top-navigation`, `allow-popups`, and
+`allow-modals`. Same-Origin Policy is the primary isolation boundary because the
+Preview runs on a different localhost port from the cockpit. No Hub cookies,
+tokens, GitHub credentials, database handles, voice credentials, or other Hub
+secrets are sent into the Preview. The untrusted pixels lane is not shipped; an
+`untrusted` spec is registered but refused at boot with a clear `403`.
+
+Preview lifecycle is bounded and disposable. The broker enforces
+`maxConcurrent`, passes CPU and memory limits to the engine, applies idle TTL,
+and reaps Previews on explicit close, TTL expiry, and Hub shutdown. The Docker
+engine uses recognizable `aspex-preview-*` names, `--rm`, and a startup sweep to
+remove leftovers after a crash. Unexpected exit is surfaced as `crashed` with a
+message and is not auto-restarted.
+
+The Hub remains `127.0.0.1` only. Docker is opt-in and capability-detected; if
+the configured engine is unavailable, Preview routes are disabled with an
+honest warning and the Hub continues to run. CI and broker tests use the mock
+engine and require no Docker.
+
 ## Future Labs Isolation
 
-Spatial panels, preview decks, delegation depth, and WebXR voice entry checks
-remain future Labs work, not Phase 1 shipped features. The forward plan is
-described in
+Spatial panels, delegation depth, WebXR voice entry checks, and the untrusted
+Preview pixels lane remain future Labs work. Preview Deck's shipped Phase 2
+security boundary is described above and in `docs/preview-deck.md`; the forward
+plan for later spatial and arbitrary-app surfaces remains in
 `docs/build/90-later-phases-outline.md`.
-
-Future preview work must keep agent code out of the cockpit origin. Expected
-directions are origin/process isolation, cross-origin or process-isolated
-previews, postMessage-style contracts, and pixels-not-code rendering for
-arbitrary agent-produced apps. These mechanisms are not part of the Phase 0
-shipped core.

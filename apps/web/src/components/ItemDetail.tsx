@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { selectSpecsByItem } from "../preview/specsByItem";
+import { usePreviewStore } from "../preview/usePreviews";
 import type { ActionResult, AttentionItem } from "../types";
 import { ActionButton } from "./ActionButton";
 import { ConfirmGate } from "./ConfirmGate";
@@ -9,8 +11,44 @@ interface ItemDetailProps {
 
 export function ItemDetail({ item }: ItemDetailProps) {
   const [result, setResult] = useState<ActionResult | null>(null);
+  const [previewPending, setPreviewPending] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const previewsEnabled = usePreviewStore((state) => state.enabled);
+  const specsByItem = usePreviewStore(selectSpecsByItem);
+  const focusOrBootSpec = usePreviewStore((state) => state.focusOrBootSpec);
   const isClaudeCodeReadOnly = item.source === "claude-code";
   const hasExecutableActions = item.actions.length > 0 && !isClaudeCodeReadOnly;
+  const boundPreviewSpecs = previewsEnabled
+    ? (specsByItem.get(item.id) ?? [])
+    : [];
+  const trustedPreviewSpec = boundPreviewSpecs.find(
+    (spec) => spec.trust === "trusted",
+  );
+  const hasUntrustedPreviewSpec = boundPreviewSpecs.some(
+    (spec) => spec.trust === "untrusted",
+  );
+  const showPreviewAffordance =
+    previewsEnabled &&
+    (trustedPreviewSpec !== undefined || hasUntrustedPreviewSpec);
+
+  const openPreview = async () => {
+    if (trustedPreviewSpec === undefined || previewPending) {
+      return;
+    }
+
+    setPreviewPending(true);
+    setPreviewError(null);
+
+    try {
+      await focusOrBootSpec(trustedPreviewSpec.id);
+    } catch (error) {
+      setPreviewError(
+        error instanceof Error ? error.message : "Preview boot failed",
+      );
+    } finally {
+      setPreviewPending(false);
+    }
+  };
 
   return (
     <aside className="rounded border border-zinc-800 bg-zinc-900/70 p-4 lg:sticky lg:top-6">
@@ -109,19 +147,48 @@ export function ItemDetail({ item }: ItemDetailProps) {
         )}
       </section>
 
-      {item.deepLink ? (
+      {item.deepLink || showPreviewAffordance ? (
         <section className="mt-5 border-t border-zinc-800 pt-4">
           <h3 className="text-sm font-semibold text-zinc-200">Links</h3>
-          <a
-            className="mt-3 inline-flex max-w-full rounded border border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-100 hover:border-zinc-500"
-            href={item.deepLink}
-            target="_blank"
-            rel="noreferrer"
-          >
-            <span className="truncate">
-              {item.source === "claude-code" ? "Focus terminal" : "Open"}
-            </span>
-          </a>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {item.deepLink ? (
+              <a
+                className="inline-flex max-w-full rounded border border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-100 hover:border-zinc-500"
+                href={item.deepLink}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <span className="truncate">
+                  {item.source === "claude-code" ? "Focus terminal" : "Open"}
+                </span>
+              </a>
+            ) : null}
+
+            {trustedPreviewSpec !== undefined ? (
+              <button
+                type="button"
+                className="rounded border border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-100 hover:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={previewPending}
+                onClick={() => void openPreview()}
+              >
+                {previewPending ? "Opening Preview" : "Preview"}
+              </button>
+            ) : showPreviewAffordance ? (
+              <button
+                type="button"
+                className="cursor-not-allowed rounded border border-zinc-900 px-3 py-2 text-sm font-medium text-zinc-600"
+                disabled
+                title="pixels lane not yet available"
+              >
+                Preview
+              </button>
+            ) : null}
+          </div>
+          {previewError ? (
+            <p className="mt-3 break-words text-sm text-red-300">
+              {previewError}
+            </p>
+          ) : null}
         </section>
       ) : null}
 
