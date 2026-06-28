@@ -1,0 +1,11 @@
+# Free-form intent is bounded by construction, never by trusting the model
+
+To resolve referents by description ("approve the atlas PR", "the one that's failing"), free-form intent feeds the model **agent-authored, untrusted text** — Item summaries and titles. That is a **prompt-injection surface**: a hostile PR title could try to steer the parse. The defence is structural, not trust-based:
+
+- **Enum-constrained output (ADR-0019).** Even a fully successful injection or a hallucination can only select a **different real Item** from the live needs-me set, or a **valid action** on the selected Item. It can never invent an id, emit free text as a command, fabricate an action, or escape the `Intent` union. This is the Phase-3 form of Phase 1's "audio is data, never code" (guardrail 9): the model's output is a **constrained `Intent`, never executable text**.
+- **Single-shot only.** Exactly **one first-stage `Intent` per utterance** — never compound, conditional, or scheduled ("approve and merge", "merge when CI passes"). Aspex **is not an orchestrator** (the project's defining "is not"); free-form intent maps to one Action on one Item and stops.
+- **The LLM produces only first-stage intents.** It may *arm* an action, navigate, read, open, or enter dictation — it can **never** emit `confirm` or `dictation_body`. The deterministic two-step (the spoken/typed "confirm ‹verb›", the dictation "post it") is unchanged, so a dangerous action still needs a **separate human confirm the model cannot supply**.
+- **Elevated confirmation for free-form-originated actions.** Any Action that **originates from a free-form parse** has its confirm requirement elevated (treated as `requiresConfirmation`), mirroring ADR-0012's rule for dictated content — cheap defence-in-depth so a surprising parse always surfaces for an explicit yes before it fires.
+- A **`docs/threat-model.md` section** documents the injection surface and these bounds.
+
+We rejected **withholding agent text from the model** (it would gut referent-by-description, the main value of free-form) and **relying on the model to ignore injected instructions** (unbounded, untestable). The bound holds *regardless of what the model does*.

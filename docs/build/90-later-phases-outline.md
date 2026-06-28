@@ -37,11 +37,20 @@ The **Spatial shell** above remains outlined-only and **gated by the Phase 2 ent
 ---
 
 ## Phase 3 — Delegation depth + adapters + Teach (Labs)
-- **Provisions** wired (interface from card 02/08 already pluggable): **cursor** (background agents, mostly visible via GitHub PRs), **opencode** (MIT TUI; MCP/events), **cowork** (integration path TBD — research flagged).
-- **codex** adapter fleshed out (CLI/cloud status; PR work already covered by github).
-- **Free-form intent:** Ollama + GBNF grammar → structured action (local, free on existing GPU). Still gated by the safe-action confirm rules.
-- **Teach Pane (Labs):** a summoned local-Ollama pane — "explain why this agent is blocked", "show the diff as a concept", "what's the safe approval path?". Differentiating; parked as Labs to keep the core small.
-- **PTY control for claude-code** (deferred from Phase 0, ADR-0004): re-verify the subscription/billing specifics first (the plan's §8 — the 15 Jun 2026 Agent-SDK-credit split is load-bearing and changeable). Mark experimental; two-step confirm for anything destructive.
+
+**The buildable-now delegation core — ✅ CHUNKED (cards 46–58).** Grilled via grill-with-docs (6 decisions) and chunked: see `46-phase-3-index.md` (index + canonical contracts + the free-form safety model) and cards `47`–`58`. Decisions are recorded in ADR-0018…0022 and the *Delegation & free-form intent (Phase 3)* glossary section in `../../CONTEXT.md`. Two tracks shipped:
+
+- **Track A — Free-form intent** (cards 47–53): Ollama + a per-request **JSON-Schema (GBNF-enforced)** constraint turning natural language into **one** structured action, as a **fallback** behind the Phase 1 closed grammar (only `unknown_command` falls through — ADR-0018), reached as a pluggable, mock-first **[[Intent service]]** (ADR-0019), **bounded by construction** — enum output, single-shot, never `confirm`/`dictation_body`, elevate-confirm (ADR-0020). Serves **voice + a typed [[Intent bar]]**, usable with voice off.
+- **Track B — Agent adapters** (cards 54–57): **codex** (`notify`→`hook-relay`), **opencode** (`opencode serve` `/event` SSE), **cursor** (opt-in signed inbound webhook — a bounded exception to no-public-ingress, ADR-0022). All **observe + deep-link only**, owning agent-local attention; PR-lifecycle stays the github adapter's (ADR-0021).
+
+**What got resolved from the old open questions:** free-form is a fallback (not LLM-primary), constrained via Ollama's JSON-Schema path (not raw GBNF), bounded by construction (not by trusting the model); codex/opencode have clean local-first ingestion; cursor needed public ingress so it became an opt-in webhook lane (user overrode the "outline it" recommendation); two-way agent control was deferred to a future ADR. The remaining outlines below stay outlines.
+
+### Still outlined (not chunked) — firm up each with another grill-with-docs pass first
+
+- **Teach Pane (Labs):** a summoned local-Ollama pane — "explain why this agent is blocked", "show the diff as a concept", "what's the safe approval path?". **Reuses the [[Intent service]] seam** (cards 48/53), so it is a thin follow-on; parked as Labs to keep the core small. Open: read-only explainer vs interactive; how much Item/diff context it may see (same untrusted-text discipline as ADR-0020).
+- **PTY control for claude-code** (deferred from Phase 0, ADR-0004; **two-way agent control deferred again in ADR-0021**): re-verify the subscription/billing specifics **first** (the plan's §8 — the 15 Jun 2026 Agent-SDK-credit split is load-bearing and changeable — **read the `claude-api` skill, do not answer from memory**). Mark experimental; its own dangerous-action design + two-step confirm. The natural home for the deferred two-way control surface (opencode's local API could be the first safe instance).
+- **cowork** Provision: integration path still **research-TBD** (no documented event/task/notification surface found) — the one outstanding [[Provision]]. Chunk once a concrete ingestion path exists.
+- **Public-webhook / Tailscale Funnel subsystem:** the cursor lane (ADR-0022) is user-exposed only; a first-class inbound-ingress subsystem (signed, Funnel-managed) would let cursor and other cloud webhooks work without manual tunnelling. Out of Phase 3 scope.
 
 ---
 

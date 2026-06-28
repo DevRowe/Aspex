@@ -1,0 +1,10 @@
+# The local LLM is a constrained "intent service", reached over generic HTTP, not an Adapter
+
+Free-form intent (ADR-0018) needs a local language model. It is reached exactly like the Phase 1 STT/TTS **voice services** (ADR-0013) and the **preview engine** (ADR-0017):
+
+- **Generic HTTP contract, config URL, pluggable.** The gateway calls an `IntentService` over HTTP; the v1 implementation targets **Ollama** (`/api/chat`). A different backend (a raw-GBNF llama.cpp server, a future hosted model) slots in behind the same interface without touching the gateway.
+- **Constrained decoding, by construction.** The model is handed a **JSON Schema** (Ollama's `format`) generated **per request** from the live [[Voice context]] — the enum of valid `itemId`s (selected + needs-me) and the valid `actionId`s of the selected Item — plus an explicit `abstain`/`no_match` production. Ollama compiles the schema to a GBNF grammar internally and masks invalid tokens, so the output is a valid `Intent` over the **live space by construction**, not by post-hoc validation. (The plan's "Ollama + GBNF" is satisfied through Ollama's supported structured-outputs API; raw GBNF is not first-class in Ollama — see issue `ollama/ollama#6237`.)
+- **Mock-first.** A **mock intent service** returns canned `Intent`s so every Hub card and CI run passes with **no GPU and no Ollama**, exactly like the mock STT/TTS and the mock preview engine. The real model is verified separately on the GPU box and never gates CI.
+- **Not an Adapter.** Like the voice services and the preview engine, the intent service **produces no Items**; it is a service the [[Voice gateway]] consumes, selected by config.
+
+We rejected **free (unconstrained) generation with Hub-side JSON validation + retry** — the guarantee would be post-hoc and a malformed parse could loop or leak — and **pinning to a raw-GBNF llama.cpp server**, which moves the backend away from the user's chosen Ollama for no added safety (Ollama's schema path is GBNF-enforced anyway). The Hub stays Bun-compile-safe (ADR-0008): HTTP only, no native model bindings.

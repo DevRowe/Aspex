@@ -57,7 +57,7 @@ _Avoid_: routing, precedence.
 ### Adapters & ingestion
 
 **Source**:
-The system an Item originates from, named on the Item: `github | claude-code | codex | webhook | ntfy | mcp`. A label on data, distinct from the Adapter that talks to it.
+The system an Item originates from, named on the Item: `github | claude-code | codex | opencode | cursor | webhook | ntfy | mcp`. A label on data, distinct from the Adapter that talks to it.
 _Avoid_: provider, integration, connector.
 
 **Adapter**:
@@ -65,11 +65,11 @@ A pluggable module that ingests Signals from one Source into the world-model and
 _Avoid_: plugin, driver, connector.
 
 **Provision**:
-An Adapter whose interface is stubbed now but wired later — cursor, opencode, cowork. A planned, not-yet-live Adapter.
+An Adapter whose interface is stubbed now but wired later. Phase 3 wires **codex, opencode, and cursor** into live Adapters; **cowork** remains the one outstanding Provision (its integration path is still research-TBD). A planned, not-yet-live Adapter.
 _Avoid_: stub, placeholder, future adapter.
 
 **Hook-relay**:
-The small bundled command (`aspex hook-relay`) that Claude Code's hooks invoke; it reads Claude Code's stdin JSON and POSTs it to the Hub as a Signal. Installed into user-level `settings.json` by `aspex hooks install`. Cross-platform stand-in for raw curl.
+The small bundled command (`aspex hook-relay`) that a coding agent's hooks invoke; it reads the agent's stdin/argument JSON and POSTs it to the Hub as a Signal. Used by **Claude Code's hooks** (installed into user-level `settings.json` by `aspex hooks install`) and by **Codex's `notify`** program (Phase 3). Cross-platform stand-in for raw curl.
 _Avoid_: webhook, shim, forwarder.
 
 ### Voice (Phase 1)
@@ -139,3 +139,17 @@ _Avoid_: runtime, sandbox provider, docker driver.
 **Trust lane**:
 Which surfacing path a Preview uses. v1 ships the **trusted-iframe lane** only — a first-party server rendered in a cross-origin, sandboxed iframe with no Hub credentials. The **pixels lane** (neko/WebRTC or screenshots) for untrusted/arbitrary output is deferred; until it lands, `untrusted` specs are not bootable. See ADR-0016.
 _Avoid_: preview mode, render path.
+
+### Delegation & free-form intent (Phase 3)
+
+**Free-form intent**:
+The capability to turn a natural-language utterance or typed line into a single structured [[Command grammar|Intent]] via the local [[Intent service]], used **only as a fallback** when the closed Command grammar yields `unknown_command`. The model's output is constrained to the live Intent space (the enum of current needs-me ids and the selected Item's real actions), so it is a smarter parser, never a new execution surface or an orchestrator. Opt-in (`intent.freeform.enabled`, default off). See ADR-0018/0020.
+_Avoid_: natural-language understanding, NLU, free-text command, prompt.
+
+**Intent service**:
+The pluggable local-LLM backend the [[Voice gateway]] calls to map an unmatched utterance plus its [[Voice context]] into a constrained Intent — Ollama via per-request JSON-Schema (GBNF-enforced) structured outputs in v1, a mock for tests. Reached over a generic HTTP contract by config URL; **not an Adapter** (it produces no Items), the delegation-side analogue of a [[Voice service]] and a [[Preview engine]]. See ADR-0019.
+_Avoid_: LLM adapter, model adapter, NLU engine, reasoner.
+
+**Intent bar**:
+The typed natural-language input on the flat cockpit. It feeds the **same** closed-grammar-then-[[Intent service]] pipeline as voice (text injected in place of a transcript, skipping STT), so free-form intent works with voice disabled. Its result re-enters the same confirm/no-match funnel a spoken command does.
+_Avoid_: command bar (collides with Command grammar), command palette, prompt box, search bar.
