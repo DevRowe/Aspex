@@ -5,3 +5,6 @@ dist
 target/
 apps/desktop/src-tauri/gen/schemas/
 .DS_Store
+__pycache__/
+.pytest_cache/
+*.pyc
