@@ -8,11 +8,14 @@ import { WebhookAdapter } from "@aspex/adapter-webhook";
 import { AdapterRegistry } from "./adapters/registry";
 import { Bus } from "./bus";
 import { type AspexConfig, resolvedLivenessConfig } from "./config";
-import { enforceOwnership } from "./engine/attention";
+import { enforceOwnership, rank } from "./engine/attention";
 import { LivenessTicker, livenessAt, nextStaleAfter } from "./engine/liveness";
 import { buildApp } from "./http/server";
 import { openDb } from "./store/db";
 import { ItemStore } from "./store/itemStore";
+import { VoiceGateway } from "./voice/gateway";
+import { HttpSttClient, MockSttClient } from "./voice/sttClient";
+import { HttpTtsClient, MockTtsClient } from "./voice/ttsClient";
 import { WorldModel } from "./world/worldModel";
 
 export const VERSION = "0.0.0";
@@ -70,6 +73,37 @@ export function buildHub(cfg: AspexConfig) {
     new NtfyNotifier(cfg.ntfy, bus);
   }
 
+  const voiceGateway =
+    cfg.voice?.enabled === true
+      ? new VoiceGateway({
+          stt:
+            cfg.voice.mock === true
+              ? new MockSttClient()
+              : new HttpSttClient(cfg.voice.stt),
+          tts:
+            cfg.voice.mock === true
+              ? new MockTtsClient()
+              : cfg.voice.tts.endpoint !== undefined
+                ? new HttpTtsClient({
+                    endpoint: cfg.voice.tts.endpoint,
+                    timeoutMs: cfg.voice.stt.timeoutMs,
+                  })
+                : null,
+          dispatchAction: registry.dispatchAction.bind(registry),
+          getSelectedActions: (id) =>
+            world.snapshot().find((item) => item.id === id)?.actions ?? [],
+          resolveProject: (name) =>
+            resolveProjectId(world, name, cfg.needsMeCap),
+          snapshotNeedsMe: () =>
+            rank(world.snapshot(), cfg.needsMeCap).needsMe.map(
+              (item) => item.id,
+            ),
+          readItem: (id) => readItem(world, id),
+          confidenceThreshold: cfg.voice.confidenceThreshold,
+          confirmTtlMs: cfg.voice.confirmTtlMs,
+        })
+      : undefined;
+
   const app = buildApp({
     worldModel: world,
     bus,
@@ -77,6 +111,16 @@ export function buildHub(cfg: AspexConfig) {
     version: VERSION,
     dispatchAction: registry.dispatchAction.bind(registry),
     actionMeta: registry.actionMeta.bind(registry),
+    voiceGateway,
+    voice: {
+      enabled: cfg.voice?.enabled === true,
+      pttKey: cfg.voice?.pttKey ?? "Space",
+      stt: cfg.voice?.mock === true ? "mock" : "http",
+      tts:
+        cfg.voice?.enabled === true && cfg.voice.mock === true
+          ? true
+          : cfg.voice?.tts.endpoint !== undefined,
+    },
   });
 
   return {
@@ -94,6 +138,58 @@ export function buildHub(cfg: AspexConfig) {
       db.close();
     },
   };
+}
+
+function resolveProjectId(
+  world: WorldModel,
+  name: string,
+  needsMeCap: number,
+): string | "ambiguous" | null {
+  const normalized = name.trim().toLowerCase();
+
+  if (normalized === "") {
+    return null;
+  }
+
+  const snapshot = world.snapshot();
+  const matches = snapshot.filter(
+    (item) => item.project.trim().toLowerCase() === normalized,
+  );
+
+  if (matches.length === 0) {
+    return null;
+  }
+
+  const topNeedsMeMatch = rank(snapshot, needsMeCap).needsMe.find(
+    (item) => item.project.trim().toLowerCase() === normalized,
+  );
+
+  if (topNeedsMeMatch !== undefined) {
+    return topNeedsMeMatch.id;
+  }
+
+  const sorted = matches.toSorted(
+    (left, right) =>
+      Date.parse(right.observedAt) - Date.parse(left.observedAt) ||
+      left.id.localeCompare(right.id),
+  );
+
+  return sorted[0]?.id ?? null;
+}
+
+function readItem(world: WorldModel, id: string): string {
+  const item = world.snapshot().find((candidate) => candidate.id === id);
+
+  if (item === undefined) {
+    return "Nothing selected.";
+  }
+
+  const actions =
+    item.actions.length === 0
+      ? "No actions available."
+      : `Actions: ${item.actions.map((action) => action.label).join(", ")}.`;
+
+  return `${item.project}: ${item.summary} ${actions}`;
 }
 
 function ensureDbDirectory(dbPath: string): void {

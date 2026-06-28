@@ -27,9 +27,29 @@ describe("hub config", () => {
       expect(cfg.dbPath).toEndWith(join(".aspex", "aspex.sqlite"));
       expect(cfg.github).toBeUndefined();
       expect(cfg.ntfy).toBeUndefined();
+      expect(cfg.voice).toEqual({
+        enabled: false,
+        stt: {
+          endpoints: ["http://127.0.0.1:8901/transcribe"],
+          timeoutMs: 5000,
+        },
+        tts: {},
+        confidenceThreshold: 0.6,
+        confirmTtlMs: 8000,
+        pttKey: "Space",
+      });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  test("voice is disabled by default", async () => {
+    const cfg = await loadConfig({
+      defaultConfigPath: join(tmpdir(), `missing-aspex-${process.pid}.json`),
+      env: {},
+    });
+
+    expect(cfg.voice?.enabled).toBe(false);
   });
 
   test("applies environment overrides after defaults", async () => {
@@ -65,6 +85,52 @@ describe("hub config", () => {
       mock: true,
     });
     expect(cfg.liveness?.quietAfterMs).toBe(1000);
+    expect(cfg.voice?.mock).toBe(true);
+  });
+
+  test("applies voice environment overrides", async () => {
+    const cfg = await loadConfig({
+      defaultConfigPath: join(tmpdir(), `missing-aspex-${process.pid}.json`),
+      env: {
+        ASPEX_VOICE_ENABLED: "1",
+        ASPEX_VOICE_STT:
+          "http://127.0.0.1:8901/transcribe, http://gpu:8901/transcribe",
+        ASPEX_VOICE_TTS: "http://127.0.0.1:8901/speak",
+        ASPEX_VOICE_CONFIDENCE: "0.75",
+        ASPEX_VOICE_MOCK: "true",
+        ASPEX_VOICE_PTT_KEY: "KeyV",
+      },
+    });
+
+    expect(cfg.voice).toMatchObject({
+      enabled: true,
+      stt: {
+        endpoints: [
+          "http://127.0.0.1:8901/transcribe",
+          "http://gpu:8901/transcribe",
+        ],
+      },
+      tts: { endpoint: "http://127.0.0.1:8901/speak" },
+      confidenceThreshold: 0.75,
+      mock: true,
+      pttKey: "KeyV",
+    });
+  });
+
+  test("normalizes voice service base URLs to contract endpoints", async () => {
+    const cfg = await loadConfig({
+      defaultConfigPath: join(tmpdir(), `missing-aspex-${process.pid}.json`),
+      env: {
+        ASPEX_VOICE_STT: "http://127.0.0.1:8901, http://gpu:8901/base/",
+        ASPEX_VOICE_TTS: "http://127.0.0.1:8901",
+      },
+    });
+
+    expect(cfg.voice?.stt.endpoints).toEqual([
+      "http://127.0.0.1:8901/transcribe",
+      "http://gpu:8901/base/transcribe",
+    ]);
+    expect(cfg.voice?.tts.endpoint).toBe("http://127.0.0.1:8901/speak");
   });
 
   test("merges config file before environment overrides", async () => {
@@ -174,7 +240,7 @@ describe("hub config", () => {
         defaultConfigPath: join(tmpdir(), `missing-aspex-${process.pid}.json`),
         env: { ASPEX_MOCK: "sometimes" },
       }),
-    ).rejects.toThrow("ASPEX_MOCK must be true, false, 1, or 0");
+    ).rejects.toThrow("ASPEX_MOCK must be a boolean");
 
     await expect(
       loadConfig({
@@ -189,6 +255,13 @@ describe("hub config", () => {
         env: { ASPEX_DB_PATH: "" },
       }),
     ).rejects.toThrow("ASPEX_DB_PATH must be a non-empty string");
+
+    await expect(
+      loadConfig({
+        defaultConfigPath: join(tmpdir(), `missing-aspex-${process.pid}.json`),
+        env: { ASPEX_VOICE_CONFIDENCE: "1.5" },
+      }),
+    ).rejects.toThrow("voice.confidenceThreshold must be between 0 and 1");
   });
 
   test("throws when optional config sections are incomplete", async () => {

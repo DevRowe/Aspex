@@ -13,13 +13,42 @@ export interface AspexConfig {
   github?: { token: string; allowlist?: string[] };
   ntfy?: { server?: string; topic: string; minSeverity?: "medium" | "high" };
   liveness?: Partial<LivenessConfig>;
+  voice?: VoiceConfig;
   mock?: boolean;
 }
 
-type ConfigFile = Partial<Omit<AspexConfig, "github" | "ntfy" | "liveness">> & {
+export interface VoiceConfig {
+  enabled: boolean;
+  stt: { endpoints: string[]; timeoutMs: number };
+  tts: { endpoint?: string };
+  confidenceThreshold: number;
+  confirmTtlMs: number;
+  pttKey: string;
+  mock?: boolean;
+}
+
+type ConfigFile = Partial<
+  Omit<AspexConfig, "github" | "ntfy" | "liveness" | "voice">
+> & {
   github?: Partial<AspexConfig["github"]>;
   ntfy?: Partial<AspexConfig["ntfy"]>;
   liveness?: Partial<LivenessConfig>;
+  voice?: Partial<Omit<VoiceConfig, "stt" | "tts">> & {
+    stt?: Partial<VoiceConfig["stt"]>;
+    tts?: Partial<VoiceConfig["tts"]>;
+  };
+};
+
+const DEFAULT_VOICE_CONFIG: VoiceConfig = {
+  enabled: false,
+  stt: {
+    endpoints: ["http://127.0.0.1:8901/transcribe"],
+    timeoutMs: 5000,
+  },
+  tts: {},
+  confidenceThreshold: 0.6,
+  confirmTtlMs: 8000,
+  pttKey: "Space",
 };
 
 export const DEFAULT_CONFIG: AspexConfig = {
@@ -27,6 +56,7 @@ export const DEFAULT_CONFIG: AspexConfig = {
   dbPath: "~/.aspex/aspex.sqlite",
   needsMeCap: 7,
   pollIntervalMs: 60_000,
+  voice: DEFAULT_VOICE_CONFIG,
   liveness: {
     pollGraceMs: 90_000,
     heartbeatGraceMs: 120_000,
@@ -110,6 +140,7 @@ function mergeConfig(base: AspexConfig, override: ConfigFile): AspexConfig {
     github: mergeOptionalObject(base.github, override.github),
     ntfy: mergeOptionalObject(base.ntfy, override.ntfy),
     liveness: mergeOptionalObject(base.liveness, override.liveness),
+    voice: mergeVoiceConfig(base.voice, override.voice),
   };
 }
 
@@ -130,6 +161,35 @@ function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
   const ntfyMinSeverity =
     env.ASPEX_NTFY_MIN_SEVERITY !== undefined
       ? parseNtfySeverity(env.ASPEX_NTFY_MIN_SEVERITY)
+      : undefined;
+  const voiceEnabled =
+    env.ASPEX_VOICE_ENABLED !== undefined
+      ? parseBoolean(
+          env.ASPEX_VOICE_ENABLED,
+          cfg.voice?.enabled,
+          "ASPEX_VOICE_ENABLED",
+        )
+      : undefined;
+  const voiceStt = parseCsv(env.ASPEX_VOICE_STT);
+  const voiceTts =
+    env.ASPEX_VOICE_TTS !== undefined
+      ? optionalNonEmptyEnv(env.ASPEX_VOICE_TTS, "ASPEX_VOICE_TTS")
+      : undefined;
+  const voiceConfidence =
+    env.ASPEX_VOICE_CONFIDENCE !== undefined
+      ? parseNumber(
+          env.ASPEX_VOICE_CONFIDENCE,
+          cfg.voice?.confidenceThreshold,
+          "ASPEX_VOICE_CONFIDENCE",
+        )
+      : undefined;
+  const voiceMock =
+    env.ASPEX_VOICE_MOCK !== undefined
+      ? parseBoolean(env.ASPEX_VOICE_MOCK, cfg.voice?.mock, "ASPEX_VOICE_MOCK")
+      : undefined;
+  const voicePttKey =
+    env.ASPEX_VOICE_PTT_KEY !== undefined
+      ? optionalNonEmptyEnv(env.ASPEX_VOICE_PTT_KEY, "ASPEX_VOICE_PTT_KEY")
       : undefined;
   const github =
     githubToken !== undefined ||
@@ -155,6 +215,33 @@ function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
             : {}),
         }
       : cfg.ntfy;
+  const hasVoiceEnv =
+    voiceEnabled !== undefined ||
+    voiceStt !== undefined ||
+    voiceTts !== undefined ||
+    voiceConfidence !== undefined ||
+    voiceMock !== undefined ||
+    voicePttKey !== undefined;
+  const voiceBase = cfg.voice ?? DEFAULT_VOICE_CONFIG;
+  const voice = hasVoiceEnv
+    ? {
+        ...voiceBase,
+        ...(voiceEnabled !== undefined ? { enabled: voiceEnabled } : {}),
+        ...(voiceConfidence !== undefined
+          ? { confidenceThreshold: voiceConfidence }
+          : {}),
+        ...(voiceMock !== undefined ? { mock: voiceMock } : {}),
+        ...(voicePttKey !== undefined ? { pttKey: voicePttKey } : {}),
+        stt: {
+          ...voiceBase.stt,
+          ...(voiceStt !== undefined ? { endpoints: voiceStt } : {}),
+        },
+        tts: {
+          ...voiceBase.tts,
+          ...(voiceTts !== undefined ? { endpoint: voiceTts } : {}),
+        },
+      }
+    : cfg.voice;
 
   return {
     ...cfg,
@@ -173,7 +260,8 @@ function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
     ),
     github,
     ntfy,
-    mock: parseBoolean(env.ASPEX_MOCK, cfg.mock),
+    mock: parseBoolean(env.ASPEX_MOCK, cfg.mock, "ASPEX_MOCK"),
+    voice,
     liveness: {
       ...cfg.liveness,
       pollGraceMs: parseInteger(
@@ -209,6 +297,7 @@ function normalizeConfig(cfg: AspexConfig): AspexConfig {
   const normalized = {
     ...cfg,
     dbPath: expandHome(cfg.dbPath),
+    voice: normalizeVoiceConfig(cfg.voice, cfg.mock),
   };
 
   if (normalized.github !== undefined) {
@@ -224,6 +313,90 @@ function normalizeConfig(cfg: AspexConfig): AspexConfig {
   }
 
   return normalized;
+}
+
+function normalizeVoiceConfig(
+  voice: VoiceConfig | undefined,
+  globalMock: boolean | undefined,
+): VoiceConfig {
+  const normalized = mergeVoiceConfig(DEFAULT_CONFIG.voice, voice);
+
+  if (normalized === undefined) {
+    throw new Error("voice config defaults are missing");
+  }
+
+  const withMock = {
+    ...normalized,
+    mock: normalized.mock ?? (globalMock === true ? true : undefined),
+  };
+
+  if (
+    typeof withMock.confidenceThreshold !== "number" ||
+    !Number.isFinite(withMock.confidenceThreshold) ||
+    withMock.confidenceThreshold < 0 ||
+    withMock.confidenceThreshold > 1
+  ) {
+    throw new Error("voice.confidenceThreshold must be between 0 and 1");
+  }
+
+  if (
+    !Number.isInteger(withMock.stt.timeoutMs) ||
+    withMock.stt.timeoutMs <= 0
+  ) {
+    throw new Error("voice.stt.timeoutMs must be a positive integer");
+  }
+
+  if (!Number.isInteger(withMock.confirmTtlMs) || withMock.confirmTtlMs <= 0) {
+    throw new Error("voice.confirmTtlMs must be a positive integer");
+  }
+
+  if (typeof withMock.pttKey !== "string" || withMock.pttKey.trim() === "") {
+    throw new Error("voice.pttKey must be a non-empty string");
+  }
+
+  if (
+    withMock.stt.endpoints.some(
+      (endpoint) => typeof endpoint !== "string" || endpoint.trim() === "",
+    )
+  ) {
+    throw new Error("voice.stt.endpoints must contain non-empty strings");
+  }
+
+  if (
+    withMock.tts.endpoint !== undefined &&
+    (typeof withMock.tts.endpoint !== "string" ||
+      withMock.tts.endpoint.trim() === "")
+  ) {
+    throw new Error("voice.tts.endpoint must be a non-empty string when set");
+  }
+
+  const normalizedEndpoints = withMock.stt.endpoints.map((endpoint) =>
+    voiceContractUrl(endpoint, "/transcribe", "voice.stt.endpoints"),
+  );
+  const normalizedTtsEndpoint =
+    withMock.tts.endpoint === undefined
+      ? undefined
+      : voiceContractUrl(withMock.tts.endpoint, "/speak", "voice.tts.endpoint");
+  const normalizedVoice: VoiceConfig = {
+    ...withMock,
+    stt: { ...withMock.stt, endpoints: normalizedEndpoints },
+    tts:
+      normalizedTtsEndpoint === undefined
+        ? {}
+        : { ...withMock.tts, endpoint: normalizedTtsEndpoint },
+  };
+
+  if (
+    normalizedVoice.enabled &&
+    normalizedVoice.mock !== true &&
+    normalizedVoice.stt.endpoints.length === 0
+  ) {
+    throw new Error(
+      "voice.stt.endpoints must contain at least one endpoint when voice is enabled",
+    );
+  }
+
+  return normalizedVoice;
 }
 
 function parseInteger(
@@ -251,22 +424,45 @@ function parseInteger(
 function parseBoolean(
   raw: string | undefined,
   fallback: boolean | undefined,
+  name: string,
 ): boolean | undefined {
   if (raw === undefined) {
     return fallback;
   }
 
-  const normalized = raw.toLowerCase();
+  const normalized = raw.trim().toLowerCase();
 
-  if (normalized === "true" || raw === "1") {
+  if (normalized === "true" || normalized === "1") {
     return true;
   }
 
-  if (normalized === "false" || raw === "0") {
+  if (normalized === "false" || normalized === "0") {
     return false;
   }
 
-  throw new Error("ASPEX_MOCK must be true, false, 1, or 0");
+  throw new Error(`${name} must be a boolean (true, false, 1, or 0)`);
+}
+
+function parseNumber(
+  raw: string | undefined,
+  fallback: number | undefined,
+  name: string,
+): number {
+  if (raw === undefined) {
+    if (fallback === undefined) {
+      throw new Error(`${name} is required`);
+    }
+
+    return fallback;
+  }
+
+  const parsed = Number(raw);
+
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`${name} must be a number`);
+  }
+
+  return parsed;
 }
 
 function parseNtfySeverity(raw: string): Extract<Severity, "medium" | "high"> {
@@ -329,6 +525,53 @@ function mergeOptionalObject<T extends object>(
     ...(base ?? {}),
     ...override,
   } as T;
+}
+
+function mergeVoiceConfig(
+  base: VoiceConfig | undefined,
+  override: ConfigFile["voice"] | undefined,
+): VoiceConfig | undefined {
+  if (override === undefined) {
+    return base;
+  }
+
+  return {
+    ...(base ?? DEFAULT_VOICE_CONFIG),
+    ...override,
+    stt: {
+      ...(base?.stt ?? DEFAULT_VOICE_CONFIG.stt),
+      ...override.stt,
+    },
+    tts: {
+      ...(base?.tts ?? DEFAULT_VOICE_CONFIG.tts),
+      ...override.tts,
+    },
+  } as VoiceConfig;
+}
+
+function voiceContractUrl(
+  endpoint: string,
+  contractPath: "/transcribe" | "/speak",
+  field: string,
+): string {
+  try {
+    const url = new URL(endpoint);
+    const trimmedPath = url.pathname.replace(/\/+$/, "");
+
+    if (trimmedPath === "" || trimmedPath === "/") {
+      url.pathname = contractPath;
+    } else if (trimmedPath.endsWith(contractPath)) {
+      url.pathname = trimmedPath;
+    } else {
+      url.pathname = `${trimmedPath}${contractPath}`;
+    }
+
+    url.hash = "";
+    url.search = "";
+    return url.toString();
+  } catch {
+    throw new Error(`${field} must contain valid URLs`);
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -182,7 +182,7 @@ describe("GitHub discovery", () => {
         .find((item) => item.id === "github:pr:brocorp/aspex#15")
         ?.actions?.map((action) => action.id)
         .sort(),
-    ).toEqual(["approve", "comment", "rerun"]);
+    ).toEqual(["approve", "comment", "request_changes", "rerun"]);
     expect(
       items.find((item) => item.id === "github:pr:brocorp/aspex#16"),
     ).toMatchObject({

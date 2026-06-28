@@ -46,7 +46,45 @@ describe("GitHub PR mapping", () => {
     expect(item.actions?.map((action) => action.id).sort()).toEqual([
       "approve",
       "comment",
+      "request_changes",
       "rerun",
+    ]);
+  });
+
+  test("maps review-requested PRs to approve, comment, and request changes", () => {
+    const item = mapGithubPullRequest(
+      rawPullRequest({
+        matches: ["review_requested"],
+        checks: { failing: [], total: 1, green: true },
+        approved: false,
+        mergeable: true,
+      }),
+    );
+
+    expect(item).toMatchObject({
+      reason: "review_requested",
+      state: "needs_review",
+      attentionRequired: true,
+    });
+    expect(item.actions).toEqual([
+      {
+        id: "approve",
+        label: "Approve",
+        risk: "medium",
+        requiresConfirmation: true,
+      },
+      {
+        id: "comment",
+        label: "Comment",
+        risk: "safe",
+        requiresConfirmation: false,
+      },
+      {
+        id: "request_changes",
+        label: "Request changes",
+        risk: "safe",
+        requiresConfirmation: false,
+      },
     ]);
   });
 
@@ -72,6 +110,39 @@ describe("GitHub PR mapping", () => {
         requiresConfirmation: true,
       },
     ]);
+    expect(
+      item.actions?.some((action) => action.id === "request_changes"),
+    ).toBe(false);
+  });
+
+  test("does not add request changes to author-only failing CI PRs", () => {
+    const item = mapGithubPullRequest(
+      rawPullRequest({
+        matches: ["author"],
+        checks: {
+          failing: ["test"],
+          total: 1,
+          green: false,
+          url: "https://github.com/brocorp/aspex/actions/runs/1",
+        },
+        approved: false,
+        mergeable: true,
+      }),
+    );
+
+    expect(item).toMatchObject({
+      reason: "failing_ci",
+      state: "needs_review",
+      attentionRequired: true,
+    });
+    expect(item.actions).toEqual([
+      {
+        id: "rerun",
+        label: "Re-run checks",
+        risk: "medium",
+        requiresConfirmation: true,
+      },
+    ]);
   });
 
   test("maps assignee PRs to review context attention", () => {
@@ -92,6 +163,7 @@ describe("GitHub PR mapping", () => {
     expect(item.actions?.map((action) => action.id).sort()).toEqual([
       "approve",
       "comment",
+      "request_changes",
     ]);
   });
 });

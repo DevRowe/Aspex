@@ -12,7 +12,7 @@ export interface GithubActionClient {
         owner: string;
         repo: string;
         pull_number: number;
-        event: "APPROVE" | "COMMENT";
+        event: "APPROVE" | "COMMENT" | "REQUEST_CHANGES";
         body?: string;
       }): Promise<unknown>;
     };
@@ -96,6 +96,24 @@ export async function runGithubAction(
     });
 
     return { ok: true, message: "commented on pull request" };
+  }
+
+  if (actionId === "request_changes") {
+    const reviewBody = body?.trim();
+
+    if (reviewBody === undefined || reviewBody === "") {
+      return { ok: false, message: "request_changes needs a body" };
+    }
+
+    await client.rest.pulls.createReview({
+      owner: ref.owner,
+      repo: ref.repo,
+      pull_number: ref.number,
+      event: "REQUEST_CHANGES",
+      body: reviewBody,
+    });
+
+    return { ok: true, message: "requested changes on pull request" };
   }
 
   if (actionId === "rerun") {

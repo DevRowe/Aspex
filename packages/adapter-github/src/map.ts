@@ -49,6 +49,12 @@ const REVIEW_ACTIONS: Action[] = [
     risk: "safe",
     requiresConfirmation: false,
   },
+  {
+    id: "request_changes",
+    label: "Request changes",
+    risk: "safe",
+    requiresConfirmation: false,
+  },
 ];
 
 const RERUN_ACTION: Action = {

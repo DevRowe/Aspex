@@ -7,10 +7,11 @@ official action path.
 
 Aspex is not an orchestrator. It does not start, schedule, or supervise agents.
 Phase 0 consumes signals from tools such as GitHub, Claude Code hooks, mock
-events, and local webhooks, then renders data in a desktop cockpit.
+events, and local webhooks, then renders data in a desktop cockpit. Phase 1 adds
+optional flat push-to-talk voice for the same cockpit.
 
-Phase 0 is local-only: no cloud account, no telemetry, and no public ingress.
-The Hub binds to `127.0.0.1`, stores state locally, and keeps any GitHub token on
+Aspex is local-only: no cloud account, no telemetry, and no public ingress. The
+Hub binds to `127.0.0.1`, stores state locally, and keeps any GitHub token on
 your machine.
 
 Demo GIF placeholder: add `docs/assets/aspex-demo.gif` before a public release.
@@ -60,6 +61,37 @@ terminal.
 
 Generic webhooks accept local `POST /signals/webhook` data for small custom
 integrations.
+
+## Phase 1 Voice Quick Start
+
+Voice is opt-in. For a no-GPU smoke test, enable mock voice:
+
+```sh
+ASPEX_VOICE_ENABLED=1 ASPEX_VOICE_MOCK=1 bun apps/hub/src/cli.ts voice check
+ASPEX_VOICE_ENABLED=1 ASPEX_VOICE_MOCK=1 bun apps/hub/src/cli.ts hub --mock
+```
+
+When using an installed CLI, the same check is `aspex voice check`.
+
+For real local or tailnet STT/TTS, run the reference server in
+[services/voice-server](services/voice-server/README.md), then point the Hub at
+it:
+
+```sh
+ASPEX_VOICE_ENABLED=1 \
+ASPEX_VOICE_STT=http://127.0.0.1:8901/transcribe \
+ASPEX_VOICE_TTS=http://127.0.0.1:8901/speak \
+bun apps/hub/src/cli.ts voice check
+```
+
+`ASPEX_VOICE_STT` may contain comma-separated fallback endpoints. Endpoint
+values can be service base URLs or explicit `/transcribe` and `/speak` contract
+URLs; the Hub normalizes them.
+
+In the web cockpit, hold the voice button or hold `Space` to record one
+Utterance. Release to send it to the Hub. The Hub returns text read-back every
+time and plays TTS when configured. The shipped grammar is documented in
+[docs/voice-grammar.md](docs/voice-grammar.md).
 
 ## Project Notes
 

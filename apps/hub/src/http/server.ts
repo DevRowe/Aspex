@@ -5,8 +5,10 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { Bus } from "../bus";
 import { rank } from "../engine/attention";
+import type { VoiceGateway } from "../voice/gateway";
 import type { WorldModel } from "../world/worldModel";
 import { createStateStream } from "./sse";
+import { registerVoiceRoutes } from "./voice";
 
 export interface ServerDeps {
   worldModel: WorldModel;
@@ -22,6 +24,13 @@ export interface ServerDeps {
     itemId: string,
     actionId: string,
   ) => { requiresConfirmation: boolean } | null;
+  voiceGateway?: VoiceGateway;
+  voice?: {
+    enabled: boolean;
+    pttKey: string;
+    stt: "mock" | "http";
+    tts: boolean;
+  };
 }
 
 export function buildApp(deps: ServerDeps): Hono {
@@ -38,6 +47,8 @@ export function buildApp(deps: ServerDeps): Hono {
   );
 
   app.get("/health", (c) => c.json({ ok: true, version: deps.version }));
+
+  registerVoiceRoutes(app, deps);
 
   app.get("/state", (c) => c.json(stateSnapshot(deps)));
 

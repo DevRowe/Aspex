@@ -1,8 +1,15 @@
-import { useState } from "react";
+import type { VoiceResult } from "@aspex/schema";
+import { useCallback, useState } from "react";
 import { useStore } from "../store";
+import { applyDirective } from "../voice/applyDirective";
+import type { PushToTalkPhase } from "../voice/usePushToTalk";
+import { useVoiceStore } from "../voice/voiceStore";
 import { AmbientList } from "./AmbientList";
 import { ItemCard } from "./ItemCard";
 import { ItemDetail } from "./ItemDetail";
+import { PttButton } from "./PttButton";
+import { VoiceHud } from "./VoiceHud";
+import { VoicePrompt } from "./VoicePrompt";
 
 export function Inbox() {
   const needsMe = useStore((state) => state.needsMe);
@@ -10,12 +17,49 @@ export function Inbox() {
   const ambient = useStore((state) => state.ambient);
   const connected = useStore((state) => state.connected);
   const selectedId = useStore((state) => state.selectedId);
+  const voiceEnabled = useVoiceStore((state) => state.enabled);
+  const setVoiceEnabled = useVoiceStore((state) => state.setEnabled);
+  const voicePhase = useVoiceStore((state) => state.phase);
+  const voiceLastReadback = useVoiceStore((state) => state.lastReadback);
+  const voiceLastOk = useVoiceStore((state) => state.lastOk);
+  const voiceSession = useVoiceStore((state) => state.session);
+  const voiceError = useVoiceStore((state) => state.error);
   const [showOverflow, setShowOverflow] = useState(false);
   const visibleNeedsMe = showOverflow ? [...needsMe, ...overflow] : needsMe;
   const selectedItem =
     [...needsMe, ...overflow, ...ambient].find(
       (item) => item.id === selectedId,
     ) ?? null;
+  const onVoiceResult = useCallback((result: VoiceResult) => {
+    useVoiceStore.getState().applyResult(result);
+    applyDirective(result.directive);
+  }, []);
+  const onVoicePhaseChange = useCallback((phase: PushToTalkPhase) => {
+    const store = useVoiceStore.getState();
+
+    if (phase === "listening") {
+      store.setPhase("listening");
+      return;
+    }
+
+    if (phase === "sending") {
+      store.setPhase("transcribing");
+      return;
+    }
+
+    if (phase === "error") {
+      return;
+    }
+
+    if (store.phase === "listening" || store.phase === "transcribing") {
+      store.setPhase("idle");
+    }
+  }, []);
+  const onVoiceError = useCallback((error: string | undefined) => {
+    if (error) {
+      useVoiceStore.getState().setError(error);
+    }
+  }, []);
 
   return (
     <main className="min-h-screen bg-zinc-950 px-4 py-6 text-zinc-100 sm:px-6">
@@ -27,21 +71,54 @@ export function Inbox() {
             </h1>
           </div>
 
-          <div className="flex items-center gap-2 text-sm font-medium text-zinc-300">
-            <span
-              className={[
-                "size-2.5 rounded-full",
-                connected ? "bg-emerald-400" : "bg-zinc-600",
-              ].join(" ")}
-              aria-hidden="true"
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            <label className="flex items-center gap-2 text-sm font-medium text-zinc-300">
+              <input
+                type="checkbox"
+                className="size-4 accent-emerald-400"
+                checked={voiceEnabled}
+                onChange={(event) => setVoiceEnabled(event.target.checked)}
+              />
+              Voice
+            </label>
+            <PttButton
+              enabled={voiceEnabled}
+              onResult={onVoiceResult}
+              onPhaseChange={onVoicePhaseChange}
+              onError={onVoiceError}
             />
-            <span>{connected ? "Connected" : "Disconnected"}</span>
+            <div className="flex items-center gap-2 text-sm font-medium text-zinc-300">
+              <span
+                className={[
+                  "size-2.5 rounded-full",
+                  connected ? "bg-emerald-400" : "bg-zinc-600",
+                ].join(" ")}
+                aria-hidden="true"
+              />
+              <span>{connected ? "Connected" : "Disconnected"}</span>
+            </div>
           </div>
         </header>
 
+        <div className="grid gap-2">
+          <VoiceHud
+            enabled={voiceEnabled}
+            phase={voicePhase}
+            lastReadback={voiceLastReadback}
+            lastOk={voiceLastOk}
+            error={voiceError}
+          />
+          <VoicePrompt session={voiceSession} />
+        </div>
+
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,24rem)] lg:items-start">
           <div className="grid gap-8">
-            <section className="grid gap-3" aria-label="Needs me">
+            <section
+              className="grid gap-3 focus:outline-none"
+              aria-label="Needs me"
+              data-voice-section="needs-me"
+              tabIndex={-1}
+            >
               {visibleNeedsMe.length === 0 ? (
                 <div className="rounded border border-zinc-800 bg-zinc-900/70 p-5">
                   <h2 className="text-base font-semibold text-zinc-100">

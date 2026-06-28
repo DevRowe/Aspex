@@ -30,3 +30,25 @@ jobs:
 
       # Card 21 CI is scoped to Bun typecheck/test/lint. Tauri packaging checks
       # require a Rust/native desktop build matrix and are intentionally separate.
+
+  voice-server:
+    name: Voice server mock contract
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Run mock contract tests
+        working-directory: services/voice-server
+        env:
+          VOICE_BACKEND: mock
+        run: uv run --no-project --with fastapi --with uvicorn --with pytest --with httpx python -m pytest

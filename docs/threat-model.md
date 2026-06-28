@@ -1,7 +1,8 @@
 # Threat Model
 
-This document describes the Phase 0 security stance as shipped. It is scoped to
-the local Hub, web cockpit, desktop shell, and Phase 0 adapters.
+This document describes the security stance as shipped through Phase 1. It is
+scoped to the local Hub, web cockpit, desktop shell, Phase 0 adapters, and the
+Phase 1 flat voice loop.
 
 ## Security Goals
 
@@ -72,10 +73,45 @@ The cockpit must not look current when it is not. Polled sources use poll health
 for liveness. Push sources use heartbeat freshness. Terminal states do not
 decay. This follows ADR-0003.
 
+## Voice (Phase 1)
+
+Voice is opt-in and flat only. There is no Phase 1 headset, spatial, or WebXR
+voice path.
+
+The web client captures audio only while Push-to-talk is held. There is no open
+mic and no wake word. Each press creates one Utterance and sends browser
+`MediaRecorder` audio plus Voice context to the local Hub.
+
+Audio and transcripts are data, never code. The Hub uses transcript text only as
+a server-side Command grammar lookup or as a literal body in Dictation mode. It
+does not `eval`, import, execute, or shell out with transcript text.
+
+The safe-grammar rules live server-side in the Voice gateway. The client cannot
+trigger or confirm an action by itself. No-match never acts. Actions marked
+`requiresConfirmation` arm first and require a separate Confirm-phrase. Dictated
+free text is accepted only after a dictation command, is read back, and is
+posted only after `post it` or `send it`.
+
+Voice service traffic is local-first. The Hub remains bound to `127.0.0.1`; when
+real STT/TTS are enabled it calls configured local or tailnet HTTP services
+outbound. The reference service exposes `/transcribe` and `/speak` and is meant
+for a trusted localhost or tailnet/LAN address, not public ingress.
+
+There is no telemetry or cloud STT/TTS by default. Web Speech is not part of the
+shipped Phase 1 path. Real Parakeet/Piper services require explicit
+configuration, and mock mode loads no model dependencies.
+
+Audio handling is transient in the shipped path. Utterance audio is forwarded to
+STT and not persisted by the Hub. TTS read-back audio, when present, is cached in
+memory behind `/voice/audio/:id` for about one minute with Cache-Control
+no-store semantics. Text read-back and Voice session state are returned to the
+client so the UI can show status and pending confirmation/dictation.
+
 ## Future Labs Isolation
 
-Voice, spatial panels, preview decks, and delegation depth are future Labs work,
-not Phase 0 features. The forward plan is described in
+Spatial panels, preview decks, delegation depth, and WebXR voice entry checks
+remain future Labs work, not Phase 1 shipped features. The forward plan is
+described in
 `docs/build/90-later-phases-outline.md`.
 
 Future preview work must keep agent code out of the cockpit origin. Expected

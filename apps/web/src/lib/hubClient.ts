@@ -56,7 +56,7 @@ export async function runAction(
   };
 }
 
-async function getHubUrl(): Promise<string> {
+export async function getHubUrl(): Promise<string> {
   hubUrl ??= resolveHubUrl();
   return hubUrl;
 }
@@ -68,7 +68,10 @@ async function resolveHubUrl(): Promise<string> {
     return configured;
   }
 
-  const invoke = (window as TauriGlobals).__TAURI__?.core?.invoke;
+  const invoke =
+    typeof window === "undefined"
+      ? undefined
+      : (window as TauriGlobals).__TAURI__?.core?.invoke;
 
   if (typeof invoke === "function") {
     return invoke<string>("hub_url");
