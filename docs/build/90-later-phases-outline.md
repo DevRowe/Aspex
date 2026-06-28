@@ -27,10 +27,12 @@ This is a small de-risking spike, **blocked on hardware** (the Aura grey-import 
 - Interaction: gaze-dwell + push-to-talk (the Phase 1 voice gateway is reused; gaze-dwell replaces the flat PTT trigger). HoloLens 2 now (test rig), Aura later.
 - **Benchmark gate:** can you hold ~10–20 live uikit panels at stable framerate on HoloLens 2? If not → texture-snapshot panels, or evaluate Babylon.js (Apache fallback).
 
-### Labs: Preview Deck (parallel, non-blocking)
+### Labs: Preview Deck (parallel, non-blocking) — ✅ CHUNKED (cards 35–45)
 Container-isolated ephemeral previews. **Security first (the plan's §4):** never execute agent code in the cockpit origin; previews in a separate origin / cross-origin iframe, postMessage-only; container per boot (Docker spike → E2B/microsandbox later); **pixels not code** (neko/WebRTC video texture) for arbitrary apps; only your own trusted preview servers get a real iframe; AR content = static glTF/GLB/USDZ first. The persistent monitoring layer (Phase 0) stays untouched; previews are disposable.
 
-Open questions: which to spike first (spatial panels vs preview); HoloLens 2 sunsetting timeline vs effort; uikit perf reality.
+**No longer an outline.** The Preview Deck — the *buildable-now*, hardware-independent half of Phase 2 — has been grilled and chunked: see `35-phase-2-preview-deck-index.md` (index + canonical contract + guardrails) and cards `36`–`45`. Decisions are recorded in ADR-0014…0017 and the *Preview Deck (Phase 2)* glossary section in `../../CONTEXT.md`. What got resolved from the open questions: boot declared specs, never build/compute (0014); a Preview is ephemeral, not an Item, world-model untouched (0015); **v1 = trusted cross-origin sandboxed iframe only**, the neko/WebRTC pixels lane deferred, trust taxonomy in the model (0016); Docker via the CLI, opt-in/capability-detected, pluggable engine + mock, bounded/no-orphan lifecycle, broker as a Hub subsystem (0017). **Scope note:** v1 is **flat only, one preview kind (a running web app)**; glTF/USDZ AR-content previews and the spatial rendering of preview tiles defer to the Spatial Shell track below.
+
+The **Spatial shell** above remains outlined-only and **gated by the Phase 2 entry gate** (ADR-0009). Open questions still parked there: HoloLens 2 sunsetting timeline vs effort; uikit perf reality; whether preview tiles become spatial panels as-is.
 
 ---
 
