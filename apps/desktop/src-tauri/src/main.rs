@@ -364,16 +364,67 @@ fn write_secure_config_file(path: &Path, content: &str) -> Result<(), String> {
     use std::fs::OpenOptions;
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-    let mut file = OpenOptions::new()
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("Hub config path has no parent: {}", path.display()))?;
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| format!("Hub config path has no file name: {}", path.display()))?
+        .to_string_lossy();
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("failed to create Hub config temp name: {error}"))?
+        .as_nanos();
+    let temp_path = parent.join(format!(
+        ".{file_name}.{}.{}.tmp",
+        std::process::id(),
+        unique
+    ));
+
+    let mut file = match OpenOptions::new()
         .write(true)
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .mode(0o600)
-        .open(path)
-        .map_err(|error| format!("failed to write Hub config {}: {error}", path.display()))?;
-    file.write_all(content.as_bytes())
-        .map_err(|error| format!("failed to write Hub config {}: {error}", path.display()))
+        .open(&temp_path)
+    {
+        Ok(file) => file,
+        Err(error) => {
+            return Err(format!(
+                "failed to write Hub config {}: {error}",
+                path.display()
+            ));
+        }
+    };
+
+    if let Err(error) = file.write_all(content.as_bytes()) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(format!(
+            "failed to write Hub config {}: {error}",
+            path.display()
+        ));
+    }
+
+    if let Err(error) = file.sync_all() {
+        let _ = fs::remove_file(&temp_path);
+        return Err(format!(
+            "failed to write Hub config {}: {error}",
+            path.display()
+        ));
+    }
+
+    drop(file);
+
+    if let Err(error) = fs::rename(&temp_path, path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(format!(
+            "failed to write Hub config {}: {error}",
+            path.display()
+        ));
+    }
+
+    Ok(())
 }
 
 #[cfg(not(unix))]
@@ -516,6 +567,41 @@ mod tests {
 
         persisted_or_generated_hub_token_with(&path, || "generated-token".to_string()).unwrap();
 
+        assert_eq!(
+            fs::metadata(path.parent().unwrap())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn generated_hub_token_replaces_permissive_config_securely() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = temp_dir("secure-existing");
+        let path = dir.join(".aspex").join("config.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, r#"{"hubPort":5555}"#).unwrap();
+        fs::set_permissions(path.parent().unwrap(), fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o666)).unwrap();
+
+        let token =
+            persisted_or_generated_hub_token_with(&path, || "generated-token".to_string())
+                .unwrap();
+        let config = fs::read_to_string(&path).unwrap();
+
+        assert_eq!(token, "generated-token");
+        assert!(config.contains(r#""hubPort": 5555"#));
+        assert!(config.contains(r#""token": "generated-token""#));
         assert_eq!(
             fs::metadata(path.parent().unwrap())
                 .unwrap()

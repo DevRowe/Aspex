@@ -1,7 +1,15 @@
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { PreviewSpec, Severity } from "@aspex/schema";
 import type { LivenessConfig } from "./engine/liveness";
 
@@ -217,11 +225,31 @@ export async function persistHubToken(
   if (ownsDirectory) {
     await chmod(directory, 0o700);
   }
-  await writeFile(path, `${JSON.stringify(next, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
+  await writeSecureConfigFile(path, `${JSON.stringify(next, null, 2)}\n`);
   await chmod(path, 0o600);
+}
+
+async function writeSecureConfigFile(
+  path: string,
+  content: string,
+): Promise<void> {
+  const tempPath = join(
+    dirname(path),
+    `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`,
+  );
+
+  try {
+    await writeFile(tempPath, content, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+    await chmod(tempPath, 0o600);
+    await rename(tempPath, path);
+  } catch (error) {
+    await rm(tempPath, { force: true });
+    throw error;
+  }
 }
 
 async function readConfigFile(

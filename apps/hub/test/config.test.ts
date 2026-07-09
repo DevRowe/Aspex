@@ -743,6 +743,31 @@ describe("hub config", () => {
     }
   });
 
+  test("persistHubToken replaces an existing permissive default config securely", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "aspex-config-auth-replace-"));
+    const configDir = join(dir, ".aspex");
+    const configPath = join(configDir, "config.json");
+
+    try {
+      await mkdir(configDir, { recursive: true });
+      await writeFile(configPath, JSON.stringify({ hubPort: 5555 }));
+      await chmod(configDir, 0o755);
+      await chmod(configPath, 0o666);
+
+      await persistHubToken(configPath, "generated-tok", {
+        defaultConfigPath: configPath,
+      });
+
+      const cfg = await loadConfig({ configPath, env: {} });
+      expect(cfg.hubPort).toBe(5555);
+      expect(cfg.auth).toEqual({ token: "generated-tok" });
+      expect(permissionBits((await stat(configDir)).mode)).toBe(0o700);
+      expect(permissionBits((await stat(configPath)).mode)).toBe(0o600);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("persistHubToken does not chmod explicit config directories", async () => {
     const dir = await mkdtemp(join(tmpdir(), "aspex-config-explicit-mode-"));
     const configDir = join(dir, "shared");
