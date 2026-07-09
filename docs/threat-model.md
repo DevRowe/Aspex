@@ -56,6 +56,9 @@ The token is generated on first boot and stored in `~/.aspex/config.json`, or
 supplied through `ASPEX_HUB_TOKEN`, which takes precedence and is never written
 to disk. It is a same-machine / same-tailnet credential, not a public
 authentication system: one token, no accounts or sessions.
+When `ASPEX_HUB_TOKEN` is supplied, the operator must provide that environment
+variable to every local caller that should reach the Hub, such as Claude Code
+hook relay processes, because env tokens are intentionally not persisted.
 
 Clients send `Authorization: Bearer <token>`. The SSE stream also accepts the
 token as a `?token=` query parameter because the browser `EventSource` API cannot

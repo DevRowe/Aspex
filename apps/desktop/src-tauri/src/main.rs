@@ -197,32 +197,34 @@ fn configured_hub_port() -> u16 {
 }
 
 fn configured_hub_token() -> Option<String> {
-    if let Ok(token) = std::env::var("ASPEX_HUB_TOKEN") {
-        let trimmed = token.trim();
-
-        if !trimmed.is_empty() {
-            if let Some(path) = default_hub_config_path() {
-                persist_hub_token(&path, trimmed)
-                    .expect("failed to persist ASPEX_HUB_TOKEN to Hub config");
-            }
-            return Some(trimmed.to_string());
-        }
-    }
+    let env_token = std::env::var("ASPEX_HUB_TOKEN").ok();
 
     #[cfg(not(debug_assertions))]
     {
         let path = default_hub_config_path().expect("failed to resolve Hub config path");
-        return Some(
-            persisted_or_generated_hub_token(&path)
-                .expect("failed to resolve Hub token from config"),
-        );
+        return Some(resolve_hub_token(env_token.as_deref(), &path, generate_hub_token)
+            .expect("failed to resolve Hub token"));
     }
 
     #[cfg(debug_assertions)]
     {
+        if let Some(token) = trimmed_hub_token(env_token.as_deref()) {
+            return Some(token);
+        }
+
         default_hub_config_path()
             .and_then(|path| read_hub_token_from_config(&path).ok().flatten())
     }
+}
+
+fn trimmed_hub_token(token: Option<&str>) -> Option<String> {
+    let trimmed = token?.trim();
+
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    Some(trimmed.to_string())
 }
 
 fn generate_hub_token() -> String {
@@ -259,8 +261,19 @@ fn home_dir() -> Option<PathBuf> {
         })
 }
 
-fn persisted_or_generated_hub_token(path: &Path) -> Result<String, String> {
-    persisted_or_generated_hub_token_with(path, generate_hub_token)
+fn resolve_hub_token<F>(
+    env_token: Option<&str>,
+    path: &Path,
+    generate: F,
+) -> Result<String, String>
+where
+    F: FnOnce() -> String,
+{
+    if let Some(token) = trimmed_hub_token(env_token) {
+        return Ok(token);
+    }
+
+    persisted_or_generated_hub_token_with(path, generate)
 }
 
 fn persisted_or_generated_hub_token_with<F>(path: &Path, generate: F) -> Result<String, String>
@@ -383,6 +396,39 @@ mod tests {
         let token = read_hub_token_from_config(&path).unwrap();
 
         assert_eq!(token.as_deref(), Some("stored-token"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn env_hub_token_is_not_persisted_to_config() {
+        let dir = temp_dir("env");
+        let path = dir.join("config.json");
+
+        let token = resolve_hub_token(Some(" env-token "), &path, || "generated-token".to_string())
+            .unwrap();
+
+        assert_eq!(token, "env-token");
+        assert!(!path.exists());
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn config_hub_token_is_reused_when_env_is_absent() {
+        let dir = temp_dir("reuse");
+        let path = dir.join("config.json");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            &path,
+            r#"{"hubPort":5555,"auth":{"token":"stored-token"}}"#,
+        )
+        .unwrap();
+
+        let token = resolve_hub_token(None, &path, || "generated-token".to_string()).unwrap();
+        let config = fs::read_to_string(&path).unwrap();
+
+        assert_eq!(token, "stored-token");
+        assert!(config.contains(r#""token":"stored-token""#));
+        assert!(!config.contains("generated-token"));
         fs::remove_dir_all(dir).unwrap();
     }
 

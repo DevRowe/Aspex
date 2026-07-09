@@ -115,6 +115,9 @@ HTTP and SSE endpoint requires a locally generated bearer token.
 On first boot the Hub generates a token and stores it in `~/.aspex/config.json`
 under `auth.token`; you can also supply one through the `ASPEX_HUB_TOKEN`
 environment variable, which takes precedence and is never written to disk.
+When you supply `ASPEX_HUB_TOKEN`, make the same environment variable available
+to every local caller that must reach the Hub, such as `aspex hook-relay`,
+because the token is intentionally not persisted for them to read.
 
 Clients present it two ways:
 
@@ -231,8 +234,9 @@ New work should not build on them; the client future is the AR tracks above.
   They still run against the Hub for development, but the display target is now
   the two client tracks (HL2 WebXR lab, Android XR product), and the cockpit is
   no longer the product surface.
-  A legacy client must also present the Hub API token; the cockpit predates that
-  requirement and is not wired for it.
+  The retained desktop shell and web client present the Hub API token through
+  the Tauri `hub_token` command, browser `Authorization` headers, and SSE
+  `?token=` stream URLs so the legacy path still works while deprecated.
 
 - **Preview Deck (`apps/hub/src/preview`).**
   The Preview Deck (ADR-0014 through ADR-0017) boots disposable, origin-isolated
