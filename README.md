@@ -27,10 +27,11 @@ Text at code size is not readable on today's glasses, so everything wearer-facin
   This runs on hardware you can buy today.
 - **Spatial tier (later):** placed panels, gaze, and pinch, lit up on Aura-class hardware (lightweight glasses with a wide FOV, hand tracking, and app-controlled dimming - the Project Aura / Android XR capability envelope expected late 2026).
 
-**Topology: Hub on the dev box, glasses over a private tailnet.**
+**Topology: Hub on the dev box, glasses over a private tailnet next.**
 The Hub runs on the same machine as your agents, holds the world-model, and stays local-first - no cloud relay in the MVP.
-The glasses reach it over a private [Tailscale](https://tailscale.com)-style tailnet.
-Because the Hub is no longer pure-localhost, its API now requires a local auth token (see [Hub API auth](#hub-api-auth)).
+Today the Hub binds `127.0.0.1` and the browser CORS allowlist is localhost/Tauri-only, so shipped access is same-machine.
+The intended topology is that glasses will reach it over a private [Tailscale](https://tailscale.com)-style tailnet once the protocol implementation opens the bind address and origin policy.
+The Hub API requires a local auth token now so it is not wide open when that tailnet reachability lands (see [Hub API auth](#hub-api-auth)).
 
 **Two client tracks: lab first.**
 
@@ -52,7 +53,8 @@ Nobody occupies the AR-agent-direction space yet; the differentiation is what on
   opencode, ...)         backend; owns          liveness,           spatial tier (later):
                          the agents)            HTTP/SSE,           placed panels on
                          direction intents      voice loop,          Aura-class glasses
-                         flow back out <---      auth token)   <---  over a private tailnet
+                         flow back out <---      auth token)   <---  tailnet target
+                                                                    (localhost-only today)
 ```
 
 - The **Hub** is a single local process: an in-process bus, SSE for one-way world-model diffs, a small REST API for control, and SQLite as the authoritative store (ADR-0005).
@@ -110,11 +112,12 @@ Aspex does not expose the Hub publicly for you.
 
 ## Hub API auth
 
-The Hub is designed to be reachable from glasses over a private tailnet, so every
-HTTP and SSE endpoint requires a locally generated bearer token.
-On first boot the Hub generates a token and stores it in `~/.aspex/config.json`
-under `auth.token`; you can also supply one through the `ASPEX_HUB_TOKEN`
-environment variable, which takes precedence and is never written to disk.
+Today the Hub binds `127.0.0.1` and the browser CORS allowlist is localhost/Tauri-only.
+It is same-machine only in the shipped path.
+The Hub is designed to become reachable from glasses over a private tailnet, so every HTTP and SSE endpoint already requires a locally generated bearer token.
+That token was added before the bind-address and origin-policy change so the API is not wide open the moment tailnet reachability lands.
+On first boot the Hub generates a token and stores it in `~/.aspex/config.json` under `auth.token`.
+You can also supply one through the `ASPEX_HUB_TOKEN` environment variable, which takes precedence and is never written to disk.
 When you supply `ASPEX_HUB_TOKEN`, make the same environment variable available
 to every local caller that must reach the Hub, such as `aspex hook-relay`,
 because the token is intentionally not persisted for them to read.
@@ -131,8 +134,7 @@ The one exception is `POST /webhooks/cursor`: it authenticates with its own
 per-request HMAC signature (ADR-0022) because it is reached by Cursor's cloud,
 which cannot hold the local token.
 
-The token is a same-machine / same-tailnet credential, not a public
-authentication system.
+The token is a same-machine credential today and a future same-tailnet credential, not a public authentication system.
 See [docs/adr/0023-hub-api-requires-a-local-bearer-token.md](docs/adr/0023-hub-api-requires-a-local-bearer-token.md)
 and [docs/threat-model.md](docs/threat-model.md).
 
