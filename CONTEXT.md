@@ -1,6 +1,8 @@
 # Aspex
 
-Local-first mission control for coding agents: a presentation + interaction layer that aggregates the live state of many agents across many projects into one attention-ranked view, tells you what needs you and why, and lets you respond safely. It is **not** an orchestrator — it consumes upstream tools (Claude Code, Codex, GitHub, containers), it never runs agents itself.
+Aspex is the augmented-reality layer for directing coding agents: a presentation + interaction layer that aggregates the live state of many agents across many projects into one attention-ranked view, surfaces it wherever you are (glance-tier cards and voice now, spatial panels on Aura-class glasses later), and directs them by handing intents to an orchestrator. It is the **face and the protocol, never the orchestrator** - a chief-of-staff orchestrator (Giles is the first and reference backend) owns the agents; Aspex renders, ranks, and directs.
+
+Honest state of the code: the Hub, world-model, ranking, liveness, HTTP/SSE protocol, and voice loop are built and tested, and they are presentation-agnostic (an AR client speaks to them over `EventSource` + `fetch` today). What does **not** exist yet is the outbound direction channel - nothing here can send an instruction to a running agent. GitHub actions are two-way; every coding-agent adapter is observe-only and offers a Deep-link, not an Action. The direction verbs, the orchestrator protocol, and the Giles adapter are the next build, defined by the forthcoming protocol ADR (in design). This glossary describes the current world-model vocabulary; the direction-channel vocabulary lands with that ADR.
 
 ## Language
 
@@ -114,7 +116,9 @@ _Avoid_: free-form mode, transcription mode, NL input.
 An external STT or TTS process the voice gateway calls over the generic HTTP contract (`/transcribe`, `/speak`) — Parakeet, Piper, a CPU fallback, or the mock. Located by config URL, pluggable, not an Adapter (it produces no Items). See ADR-0013.
 _Avoid_: STT adapter, TTS adapter, speech engine.
 
-### Preview Deck (Phase 2)
+### Preview Deck (Phase 2, legacy)
+
+The Preview Deck is real, tested, opt-in code, but it sits beside the world-model and never feeds it - a different product from ambient supervision. It is retained for reference during the pivot and is out of the north-star path; new work should not build on it. Its vocabulary is preserved below unchanged.
 
 **Preview Deck**:
 The Hub subsystem plus flat cockpit surface that boots, isolates, and shows disposable previews of declared agent/dev output. Labs/experimental and opt-in; it sits beside the world-model and never feeds it. See ADR-0015.
@@ -140,7 +144,9 @@ _Avoid_: runtime, sandbox provider, docker driver.
 Which surfacing path a Preview uses. v1 ships the **trusted-iframe lane** only — a first-party server rendered in a cross-origin, sandboxed iframe with no Hub credentials. The **pixels lane** (neko/WebRTC or screenshots) for untrusted/arbitrary output is deferred; until it lands, `untrusted` specs are not bootable. See ADR-0016.
 _Avoid_: preview mode, render path.
 
-### Delegation & free-form intent (Phase 3)
+### Free-form intent (Phase 3)
+
+Naming honesty: earlier docs and the Phase 3 commit called this the "delegation core", but it delegates nothing. Free-form intent is a smarter parser for the closed grammar's fallback, constrained to the live Intent space; it is not the direction channel and not an orchestrator. The real delegation - direction verbs acting back through the orchestrator - is the next build.
 
 **Free-form intent**:
 The capability to turn a natural-language utterance or typed line into a single structured [[Command grammar|Intent]] via the local [[Intent service]], used **only as a fallback** when the closed Command grammar yields `unknown_command`. The model's output is constrained to the live Intent space (the enum of current needs-me ids and the selected Item's real actions), so it is a smarter parser, never a new execution surface or an orchestrator. Opt-in (`intent.freeform.enabled`, default off). See ADR-0018/0020.
