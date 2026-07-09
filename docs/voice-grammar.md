@@ -162,3 +162,5 @@ editable controls.
 The Hub always returns text read-back. If TTS succeeds, the HTTP route returns a
 short-lived `/voice/audio/<id>` URL containing cached WAV bytes; if TTS is off or
 fails, `audioUrl` is omitted and the text read-back remains authoritative.
+The web client authenticates the utterance and audio-fetch requests with the Hub
+bearer token, the same as the rest of the Hub HTTP API.

@@ -45,7 +45,7 @@ export function Inbox() {
 4. Selecting a card sets a `selectedId` (store field) — detail panel is card 13.
 
 ## Acceptance check
-With `hub --mock` running and `bun run dev`:
+With `hub --mock` running and Vite started with `VITE_HUB_TOKEN` from `~/.aspex/config.json`:
 - The grilled scenarios render correctly: the **review-requested + failing-CI PR is ONE card** under "CI failing" (higher rung), not two.
 - The **done** session is in **Ambient**, never in needs-me.
 - The **blocked** session is at the **top** of needs-me.

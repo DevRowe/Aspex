@@ -24,12 +24,14 @@ packages/adapter-webhook/test/webhook.test.ts
 ```bash
 bun test packages/adapter-webhook   # green
 # live:
+TOKEN="$(bun --print 'JSON.parse(await Bun.file(process.env.HOME + "/.aspex/config.json").text()).auth.token')"
 curl -X POST http://127.0.0.1:4317/signals/webhook -H 'content-type: application/json' \
+  -H "authorization: Bearer $TOKEN" \
   -d '{"id":"webhook:deploy-1","source":"webhook","state":"error","summary":"Deploy failed","attentionRequired":true,"severity":"high"}'
-curl -s http://127.0.0.1:4317/state | jq '.needsMe[] | select(.id=="webhook:deploy-1")'
+curl -s -H "authorization: Bearer $TOKEN" http://127.0.0.1:4317/state | jq '.needsMe[] | select(.id=="webhook:deploy-1")'
 ```
 Tests prove: a minimal body normalises to a valid Item; same `key` twice → one Item; attentionRequired body lands in needs-me, ambient body does not.
 
 ## Out of scope / do NOT do
-- **No public ingress.** Bind stays `127.0.0.1` (Tailscale Funnel is a later phase). No auth in Phase 0.
+- **No public ingress.** Bind stays `127.0.0.1` (Tailscale Funnel is a later phase). ADR-0023 later added the local Hub bearer token.
 - Do not invent rich action semantics — generic ingest is read-mostly.

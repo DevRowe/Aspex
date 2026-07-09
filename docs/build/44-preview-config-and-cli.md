@@ -29,7 +29,8 @@ previews: {
 - **Wire (enabled only):** pick the engine (`mock` or `docker`); if `engine.available()` is false → log *"previews enabled but engine unavailable"*, leave routes unmounted (Deck stays hidden). If available → run `engine.sweep?.()` (clear orphans, card 38), construct the broker (card 40) with `maxConcurrent`/`limits`, mount the routes (card 41), and register `broker.shutdown()` on Hub shutdown.
 - **Expose the flag:** add `previews.enabled` (and optionally live/max counts) to the existing `/config` (or `/health`) endpoint the web client reads, so card 42/43 can hide the Deck/affordance.
 - **`aspex preview check`:** load config → `engine.available()` → validate registry → print a table: each spec `id`, `trust`, and **bootable?** (`trusted` + engine available) or the reason not. Exit 0 always; report clearly (parity with `aspex voice check`).
-- **`aspex preview list`:** `GET /previews` on the running Hub → print live previews (id, spec, state, url).
+- **`aspex preview list`:** authenticated `GET /previews` on the running Hub → print live previews (id, spec, state, url).
+  The CLI reads the Hub token from config and sends `Authorization: Bearer`.
 
 ## Steps
 1. Extend the config schema + defaults + validation.

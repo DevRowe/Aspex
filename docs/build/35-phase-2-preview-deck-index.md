@@ -117,6 +117,10 @@ export interface Preview {
 | `DELETE /previews/:id` | explicit teardown |
 | SSE `preview` event | `booting → ready → crashed → stopped` streamed on the existing bus |
 
+Current implementation note: ADR-0023 later made `/previews/*` authenticated with
+`Authorization: Bearer <hub-token>`, and the shared SSE stream carries the token
+as `?token=<hub-token>`.
+
 ---
 
 ## Lifecycle & security model (every relevant card upholds this)

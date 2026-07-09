@@ -32,7 +32,7 @@ apps/web/src/preview/PreviewTile.tsx     # one tile (state machine + iframe + co
 5. Tests `apps/web/test/preview/*`: tile renders each state; the ready iframe has the exact sandbox attrs and **no** credential in `src`; Stop/Re-boot/Open call the right endpoints (mock fetch); an SSE `preview` event flips a tile's state. Playwright happy-path optional.
 
 ## Acceptance check
-With `previews.enabled` + `engine=mock` Hub and `bun run dev`:
+With `previews.enabled` + `engine=mock` Hub and Vite started with `VITE_HUB_TOKEN` from `~/.aspex/config.json`:
 - Open the Deck → boot a **trusted** spec → tile goes `booting → ready` → the iframe loads the spec's url.
 - **Stop** → `stopped`; **Re-boot** → fresh `ready`; **Open in tab** opens the url.
 - An **untrusted** spec is shown **non-bootable**.

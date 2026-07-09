@@ -33,6 +33,10 @@ async handleText(text: string, context: VoiceContext): Promise<VoiceGatewayResul
 ```
 
 ## HTTP (`http/voice.ts`, extends card 28)
+Current implementation note: this route inherits the Hub bearer-token middleware
+from ADR-0023.
+The web Intent bar sends `Authorization: Bearer <hub-token>`.
+
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/intent` | JSON `{ text: string, context: VoiceContext }` → `VoiceResult`. `assertVoiceContext`. If no gateway → `503 {error:"intent not configured"}`. Read-back audio handled exactly like `/voice/utterance` (cache → `audioUrl`). |
@@ -60,8 +64,8 @@ app.post("/intent", async (c) => {
 bun test apps/hub/test/intent-http.test.ts apps/hub/test/voice-http.test.ts     # green (no regression)
 ```
 Tests must prove:
-- `POST /intent {text:"what needs me", context}` → 200 with the needs-me read-back (closed grammar, **no LLM**).
-- `POST /intent {text:"approve the atlas review", context}` with a fake gateway whose intent service arms → 200 armed; a follow-up `POST /intent {text:"confirm approve"}` → dispatched once.
+- Authenticated `POST /intent {text:"what needs me", context}` → 200 with the needs-me read-back (closed grammar, **no LLM**).
+- Authenticated `POST /intent {text:"approve the atlas review", context}` with a fake gateway whose intent service arms → 200 armed; a follow-up authenticated `POST /intent {text:"confirm approve"}` → dispatched once.
 - `handleText` produces the **same `VoiceResult` shape** as `handle`.
 - Missing/blank `text` → 400; bad `context` → 400; no gateway → 503.
 - Existing `/voice/utterance` tests still pass (the refactor didn't change voice behaviour).

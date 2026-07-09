@@ -24,7 +24,7 @@ Codex's `notify` config runs an external program with a **single JSON argument**
 # Codex config (e.g. ~/.codex/config.toml)
 notify = ["aspex", "hook-relay", "--source", "codex"]
 ```
-The relay reads codex's JSON (from argv/stdin), shapes a `Signal` (id `codex:session:<thread-id>`, source `codex`), and POSTs to `/signals/codex` — short timeout, **exit fast and never error** (don't break the user's codex), exactly like the claude-code relay.
+The relay reads codex's JSON (from argv/stdin), shapes a `Signal` (id `codex:session:<thread-id>`, source `codex`), reads the Hub token from config, and POSTs to `/signals/codex` with `Authorization: Bearer <token>` - short timeout, **exit fast and never error** (don't break the user's codex), exactly like the claude-code relay.
 
 ## Event → Signal mapping (`map.ts`, pure)
 > **Honest coarseness:** codex `notify` currently fires only `agent-turn-complete`, so codex Items update **per completed turn**, not mid-turn. Richer `blocked`/`error` states await codex exposing more notify events (the `--json`/app-server path would require Aspex to *launch* codex — out of scope, ADR-0021/not-an-orchestrator). Map what exists:

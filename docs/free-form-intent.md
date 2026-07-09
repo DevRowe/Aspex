@@ -127,6 +127,8 @@ interface IntentHttpBody {
 It returns `VoiceResult`, the same result envelope used by
 `POST /voice/utterance`. When intent is disabled or the gateway is not
 configured, the route returns `503`.
+Like every Hub HTTP route except `POST /webhooks/cursor`, it requires
+`Authorization: Bearer <hub-token>`.
 
 ## References
 

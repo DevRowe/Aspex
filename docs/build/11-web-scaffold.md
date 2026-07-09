@@ -61,7 +61,7 @@ export async function runAction(itemId: string, actionId: string, confirmed = fa
 # terminal 1:
 bun run apps/hub/src/cli.ts hub --mock
 # terminal 2:
-cd apps/web && bun run dev
+VITE_HUB_TOKEN="$(bun --print 'JSON.parse(await Bun.file(process.env.HOME + "/.aspex/config.json").text()).auth.token')" bun run --cwd apps/web dev
 # open http://localhost:5173 -> connection dot is green; needs-me / ambient counts
 # change over the first ~10s as mock signals arrive and decay.
 ```

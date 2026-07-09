@@ -24,11 +24,11 @@ docs/licenses.md           # note no new AGPL/GPL, no new runtime deps, docker-v
 
 ## E2E mock test (`e2e-mock.test.ts`)
 With `previews.enabled`, `engine=mock`, and a demo trusted spec, against the **real Hono app + broker** (no Docker):
-1. `POST /previews {specId}` → `201`, `state: "booting"`.
+1. Authenticated `POST /previews {specId}` → `201`, `state: "booting"`.
 2. Observe SSE `preview` events transition `booting → ready` (capture from the bus).
-3. `GET /previews/:id` → `ready` with a `127.0.0.1` `url`.
-4. `DELETE /previews/:id` → `204`; SSE `stopped`.
-5. Assert `broker.list()` (or `GET /previews`) is **empty** — no leaked previews.
+3. Authenticated `GET /previews/:id` → `ready` with a `127.0.0.1` `url`.
+4. Authenticated `DELETE /previews/:id` → `204`; SSE `stopped`.
+5. Assert `broker.list()` (or authenticated `GET /previews`) is **empty** - no leaked previews.
 6. Negative: `POST` an **untrusted** spec → `403`; `POST` past `maxConcurrent` → `429`.
 
 ## Acceptance check

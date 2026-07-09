@@ -103,7 +103,8 @@ Use this for CLI tools that can run a local notification command when session
 or turn events are available. Codex follows this pattern.
 
 The tool calls `aspex hook-relay --source codex ...`, and the relay posts to the
-local Hub. The current Codex notify payload maps completed turns to
+local Hub with the configured bearer token.
+The current Codex notify payload maps completed turns to
 `done`/`ambient` Items. Keep the relay data-only: translate the notification
 payload into a Signal, attach evidence and a deep-link when available, and never
 execute agent-authored text.
@@ -138,8 +139,14 @@ The local webhook path is:
 
 ```txt
 POST http://127.0.0.1:4317/signals/webhook
+Authorization: Bearer <hub-token>
 content-type: application/json
 ```
+
+The token is the Hub API token from `~/.aspex/config.json` under `auth.token`, or
+the value supplied through `ASPEX_HUB_TOKEN`.
+`POST /webhooks/cursor` is the only bearer-token exemption because it uses its
+own HMAC signature.
 
 Accepted body:
 
@@ -172,6 +179,7 @@ Example:
 
 ```sh
 curl -X POST http://127.0.0.1:4317/signals/webhook \
+  -H "authorization: Bearer $(bun --print 'JSON.parse(await Bun.file(process.env.HOME + \"/.aspex/config.json\").text()).auth.token')" \
   -H 'content-type: application/json' \
   -d '{"key":"deploy-1","summary":"Deploy failed","state":"error","severity":"high","attentionRequired":true}'
 ```
@@ -183,5 +191,6 @@ curl -X POST http://127.0.0.1:4317/signals/webhook \
 - [ADR-0003: Two-track liveness](adr/0003-two-track-liveness-poll-health-vs-heartbeats.md)
 - [ADR-0004: Phase 0 Claude Code is read-only](adr/0004-phase0-claude-code-is-read-only.md)
 - [ADR-0021: Phase 3 agent adapters are observe-only](adr/0021-phase3-agent-adapters-are-observe-only-and-own-agent-local-attention.md)
-- [ADR-0022: Cursor webhook bounded exception](adr/0022-cursor-webhook-bounded-exception.md)
+- [ADR-0022: Cursor webhook bounded exception](adr/0022-cursor-inbound-webhook-is-an-opt-in-bounded-exception-to-no-public-ingress.md)
+- [ADR-0023: Hub API requires a local bearer token](adr/0023-hub-api-requires-a-local-bearer-token.md)
 - [Event schema](event-schema.md)

@@ -34,7 +34,7 @@ apps/web/src/components/VoicePrompt.tsx    # confirm / dictation prompt affordan
 5. Honour `enabled` in the PTT hook.
 
 ## Acceptance check
-With `hub --mock` (script the mock STT for a sequence) + `bun run dev`:
+With `hub --mock` (script the mock STT for a sequence) and Vite started with `VITE_HUB_TOKEN` from `~/.aspex/config.json`:
 - Holding PTT shows **listening**, release shows **transcribing**, then the read-back text appears — never a blank/frozen state.
 - A scripted "focus ‹project›" returns a `select` directive → that Item's detail opens (selection changed) — proves `applyDirective`.
 - A scripted "merge" returns `session.pendingConfirm` → the HUD shows "Say 'confirm merge'"; a scripted "confirm merge" clears it and shows the result.

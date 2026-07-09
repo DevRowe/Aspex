@@ -212,7 +212,7 @@ The real delegation - direction verbs acting back through the orchestrator - is 
 **Free-form intent**:
 The capability to turn a natural-language utterance or typed line into a single structured [[Command grammar|Intent]] via the local [[Intent service]], used **only as a fallback** when the closed Command grammar yields `unknown_command`.
 The model's output is constrained to the live Intent space (the enum of current needs-me ids and the selected Item's real actions), so it is a smarter parser, never a new execution surface or an orchestrator.
-Opt-in (`intent.freeform.enabled`, default off).
+Opt-in (`intent.enabled`, default off).
 See ADR-0018/0020.
 _Avoid_: natural-language understanding, NLU, free-text command, prompt.
 

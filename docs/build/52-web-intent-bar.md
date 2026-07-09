@@ -15,9 +15,9 @@ apps/web/src/intent/useIntent.ts          # POST /intent; returns VoiceResult; a
 
 ## Behaviour
 - A visible text input (submit on Enter). Optional focus hotkey (e.g. `/`), distinct from the push-to-talk hold-key.
-- On submit: assemble `VoiceContext` (`selectedId` + the `needsMeIds` **as shown**, exactly like card 31's voice-context), `POST /intent { text, context }`.
+- On submit: assemble `VoiceContext` (`selectedId` + the `needsMeIds` **as shown**, exactly like card 31's voice-context), then send authenticated `POST /intent { text, context }` through `hubFetch`.
 - Render the returned `VoiceResult`: the **read-back** line; apply the **directive** via card 32's applier (`select` / `move` / `show_needs_me` / `open`); **mirror `session`** so the UI shows "type or say 'confirm approve'" when an action is armed, or the dictation prompt.
-- A follow-up line ("confirm approve", "post it", "cancel") is just another `POST /intent` — the server's session carries the pending-confirm/dictation (the gateway is stateful per card 26/50).
+- A follow-up line ("confirm approve", "post it", "cancel") is just another authenticated `POST /intent` - the server's session carries the pending-confirm/dictation (the gateway is stateful per card 26/50).
 - **Honest provenance:** when the read-back indicates an LLM interpretation, show it plainly (the server already phrases it — card 50); do not hide that it was inferred.
 - Visibility gated on `intent.enabled` (from a tiny `GET /intent/config` or reuse the `GET /voice/config` shape — add `{ intentEnabled }`).
 

@@ -53,7 +53,8 @@ export class MockAdapter implements Adapter {
 ```bash
 bun run apps/hub/src/cli.ts hub --mock &
 sleep 3
-curl -s http://127.0.0.1:4317/state | jq '.needsMe[].reason'
+TOKEN="$(bun --print 'JSON.parse(await Bun.file(process.env.HOME + "/.aspex/config.json").text()).auth.token')"
+curl -s -H "authorization: Bearer $TOKEN" http://127.0.0.1:4317/state | jq '.needsMe[].reason'
 # includes blocked_on_human, failing_ci, review_requested, awaiting_merge; NOT the done/working ambient ones
 ```
 Plus `bun test packages/adapter-mock` green.

@@ -37,7 +37,7 @@ README.md                        # EDIT: voice quick-start + the GPU-box setup p
 # whole loop, no GPU:
 ASPEX_VOICE_ENABLED=1 bun run apps/hub/src/cli.ts hub --mock &
 # mock STT scripted to: "what needs me" -> "focus <project>" -> "merge" -> "confirm merge"
-cd apps/web && bun run dev
+VITE_HUB_TOKEN="$(bun --print 'JSON.parse(await Bun.file(process.env.HOME + "/.aspex/config.json").text()).auth.token')" bun run --cwd apps/web dev
 # Manual (or Playwright): PTT each step; verify read-backs, the focus directive selects the Item,
 # "merge" arms (no dispatch), "confirm merge" dispatches once.
 bun install && bun run typecheck && bun test && bun run lint   # all green

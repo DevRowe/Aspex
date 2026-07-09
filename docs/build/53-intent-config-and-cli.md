@@ -69,7 +69,8 @@ if (cfg.voice?.enabled || cfg.intent?.enabled) {
 ## Acceptance check
 ```bash
 ASPEX_INTENT_ENABLED=1 ASPEX_INTENT_MOCK=1 bun run apps/hub/src/cli.ts hub --mock &
-curl -s -X POST 127.0.0.1:4317/intent -H 'content-type: application/json' \
+TOKEN="$(bun --print 'JSON.parse(await Bun.file(process.env.HOME + "/.aspex/config.json").text()).auth.token')"
+curl -s -X POST 127.0.0.1:4317/intent -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
   -d '{"text":"what needs me","context":{"needsMeIds":[]}}'   # 200 VoiceResult
 bun run apps/hub/src/cli.ts intent check   # mock -> exit 0
 bun test apps/hub/test/config.test.ts      # green
@@ -79,6 +80,7 @@ bun test apps/hub/test/config.test.ts      # green
 
 ## Out of scope / do NOT do
 - Do not enable intent by default (`enabled:false`) — opt-in, needs Ollama (or `intent.mock`).
-- Do not bind to `0.0.0.0` or add auth (card 09 boundary holds). Ollama is reached **outbound**; the Hub stays `127.0.0.1`.
+- Historical card scope did not include auth; ADR-0023 later added the local Hub bearer token.
+- Do not bind to `0.0.0.0`. Ollama is reached **outbound**; the Hub stays `127.0.0.1`.
 - Do not put model code in the Hub (ADR-0019) — `intent check` does HTTP probes only.
 - Adapter config (codex/opencode/cursor) is **card 57**, not here.

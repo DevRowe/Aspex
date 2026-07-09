@@ -1,10 +1,10 @@
 # Aspex — Phase 3 Build Plan (Task Card Index)
 
-Phase 3 adds **delegation depth**: a **free-form intent** path (a local LLM that turns natural language into a *constrained* action, as a fallback behind the Phase 1 closed grammar) plus **three new agent Sources** — **codex**, **opencode**, **cursor** — wired as observe-only Adapters. It builds **on top of committed Phase 0 + Phase 1 + Phase 2** (cards 01–45): same monorepo, same Hub, same web client, same `AttentionItem` world-model — which it **does not modify**. Build the cards **in order**; later cards depend on earlier ones, and several **extend** existing Phase 1 files (the voice gateway, the schema, the CLI) rather than create new subsystems.
+Phase 3 adds **free-form intent and observe-only agent adapters**: a local LLM path that turns natural language into a *constrained* action as a fallback behind the Phase 1 closed grammar, plus **three new agent Sources** - **codex**, **opencode**, **cursor** - wired as observe-only Adapters. It builds **on top of committed Phase 0 + Phase 1 + Phase 2** (cards 01-45): same monorepo, same Hub, same web client, same `AttentionItem` world-model - which it **does not modify**. Build the cards **in order**; later cards depend on earlier ones, and several **extend** existing Phase 1 files (the voice gateway, the schema, the CLI) rather than create new subsystems.
 
 Read this index fully before starting any card. It carries the rules and the canonical contracts every card assumes. The Phase 0 index (`00-index.md`), the Phase 1 index (`22-phase-1-index.md`), the Phase 2 index (`35-phase-2-preview-deck-index.md`), and `../../CONTEXT.md` still apply in full.
 
-> **Scope:** this is the **buildable-now delegation core**. **Teach Pane** (Labs), **PTY control for claude-code** (billing-gated — re-verify §8 first), and the **cowork** Provision (integration path research-TBD) stay outlines in `90-later-phases-outline.md`. Nothing here needs a headset, and free-form intent runs **local + free** on the existing GPU box (Ollama) or against a mock with **no GPU at all**.
+> **Scope:** this is the **buildable-now free-form intent and adapter track**. **Teach Pane** (Labs), **PTY control for claude-code** (billing-gated - re-verify §8 first), and the **cowork** Provision (integration path research-TBD) stay outlines in `90-later-phases-outline.md`. Nothing here needs a headset, and free-form intent runs **local + free** on the existing GPU box (Ollama) or against a mock with **no GPU at all**.
 
 ---
 
@@ -43,6 +43,12 @@ Use the glossary words exactly (`../../CONTEXT.md`): Free-form intent, Intent se
 | opencode ingest | **`opencode serve` `/event` SSE** | local event stream → Signals; stream liveness → heartbeats. |
 | cursor ingest | **opt-in inbound `statusChange` webhook** | reuses the generic webhook adapter plumbing; signature-verified; default off (ADR-0022). |
 | Typed surface | **Intent bar** (web) | injects typed text as a transcript into the same pipeline; works with voice off. |
+
+Current implementation note: ADR-0023 later made Hub REST/SSE endpoints require
+the local bearer token.
+The web client uses `Authorization: Bearer` for `/intent`, `aspex hook-relay`
+sends the same header for `/signals/*`, and the shared SSE stream uses
+`?token=`.
 
 The Hub stays **Bun-compile-safe** (ADR-0008): all new Hub code is Bun/TS, HTTP only, **no native model bindings**. **No AGPL/GPL** added — verify and record Ollama, the opencode SDK, codex, and cursor client licences in `docs/licenses.md` (all expected MIT/Apache/BSD). **No new runtime npm deps** beyond a typed HTTP client if needed — `fetch` + SSE already exist.
 

@@ -23,6 +23,11 @@ export interface ServerDeps {
 ```
 
 ## Endpoints
+Current implementation note: these routes inherit the Hub bearer-token
+middleware from ADR-0023.
+The client uses `Authorization: Bearer <hub-token>` for the utterance and audio
+requests.
+
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/voice/utterance` | `multipart/form-data`: `audio` (file) + `context` (JSON string). `assertVoiceContext`. → `VoiceResult` (JSON). `audioUrl`, if any, points at `/voice/audio/:id`. If no `voiceGateway` → `503 {error:"voice not configured"}`. |
@@ -67,6 +72,7 @@ Tests must prove:
 
 ## Out of scope / do NOT do
 - No WebSocket/streaming audio (ADR-0005) — one POST per utterance.
-- No auth; bind stays `127.0.0.1` (card 09). Voice is local-only.
+- Historical Phase 1 scope did not include auth; ADR-0023 later added the local Hub bearer token.
+- Bind stays `127.0.0.1` (card 09). Voice is local-only.
 - Do not put gateway logic here — this is transport + the audio cache only.
 - Do not persist audio to disk or the DB — short-lived in-memory only.
