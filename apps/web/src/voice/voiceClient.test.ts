@@ -4,12 +4,14 @@ import { playReadback, postUtterance, stopReadback } from "./voiceClient";
 
 const originalFetch = globalThis.fetch;
 const originalAudio = globalThis.Audio;
+const originalWindow = (globalThis as { window?: unknown }).window;
 const originalCreateObjectUrl = URL.createObjectURL;
 const originalRevokeObjectUrl = URL.revokeObjectURL;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
   globalThis.Audio = originalAudio;
+  (globalThis as { window?: unknown }).window = originalWindow;
   URL.createObjectURL = originalCreateObjectUrl;
   URL.revokeObjectURL = originalRevokeObjectUrl;
   stopReadback();
@@ -46,6 +48,27 @@ describe("voiceClient", () => {
         needsMeIds: ["github:pr:1"],
       }),
     );
+  });
+
+  test("sends the Tauri Hub token on voice requests", async () => {
+    let request: Request | undefined;
+    const result: VoiceResult = {
+      ok: true,
+      readback: "Showing what needs you.",
+      session: {},
+    };
+
+    (globalThis as { window?: unknown }).window = tauriWindow("voice-token");
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      request = new Request(input, init);
+      return Promise.resolve(Response.json(result));
+    }) as typeof fetch;
+
+    await postUtterance(new Blob(["abc"], { type: "audio/webm" }), {
+      needsMeIds: [],
+    });
+
+    expect(request?.headers.get("authorization")).toBe("Bearer voice-token");
   });
 
   test("stops existing readback when new readback starts", async () => {
@@ -91,3 +114,14 @@ describe("voiceClient", () => {
     expect(pauses).toEqual([4]);
   });
 });
+
+function tauriWindow(token: string): unknown {
+  return {
+    __TAURI__: {
+      core: {
+        invoke: async (command: string) =>
+          command === "hub_token" ? token : "http://127.0.0.1:4317",
+      },
+    },
+  };
+}

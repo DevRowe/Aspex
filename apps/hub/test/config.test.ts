@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -725,4 +725,23 @@ describe("hub config", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  test("persistHubToken restricts config file and directory permissions", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "aspex-config-auth-mode-"));
+    const configDir = join(dir, ".aspex");
+    const configPath = join(configDir, "config.json");
+
+    try {
+      await persistHubToken(configPath, "generated-tok");
+
+      expect(permissionBits((await stat(configDir)).mode)).toBe(0o700);
+      expect(permissionBits((await stat(configPath)).mode)).toBe(0o600);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
+
+function permissionBits(mode: number): number {
+  return mode & 0o777;
+}

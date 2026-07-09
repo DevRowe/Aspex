@@ -68,6 +68,7 @@ export function buildApp(deps: ServerDeps): Hono {
         origin === "tauri://localhost" || origin.startsWith("http://localhost:")
           ? origin
           : undefined,
+      allowHeaders: ["Authorization", "Content-Type"],
     }),
   );
 

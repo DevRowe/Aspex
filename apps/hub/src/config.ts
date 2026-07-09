@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import type { PreviewSpec, Severity } from "@aspex/schema";
@@ -204,8 +204,14 @@ export async function persistHubToken(
     auth: { ...(existing.auth ?? {}), token },
   };
 
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  const directory = dirname(path);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await chmod(directory, 0o700);
+  await writeFile(path, `${JSON.stringify(next, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  await chmod(path, 0o600);
 }
 
 async function readConfigFile(

@@ -92,6 +92,17 @@ describe("hub API auth", () => {
     db.close();
   });
 
+  test("rejects query tokens outside the SSE stream", async () => {
+    const { app, db } = openAuthedServer();
+
+    const response = await app.fetch(
+      new Request(`http://hub.test/state?token=${TOKEN}`),
+    );
+
+    expect(response.status).toBe(401);
+    db.close();
+  });
+
   test("protects action dispatch", async () => {
     const { app, db } = openAuthedServer();
 
@@ -150,6 +161,9 @@ describe("hub API auth", () => {
     expect(response.status).toBe(204);
     expect(response.headers.get("access-control-allow-origin")).toBe(
       "http://localhost:5173",
+    );
+    expect(response.headers.get("access-control-allow-headers")).toBe(
+      "Authorization,Content-Type",
     );
     db.close();
   });

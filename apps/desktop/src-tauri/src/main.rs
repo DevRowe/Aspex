@@ -20,6 +20,7 @@ const HUB_STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
 struct HubSidecarState {
     child: Mutex<Option<CommandChild>>,
     port: Mutex<u16>,
+    token: Mutex<Option<String>>,
 }
 
 #[tauri::command]
@@ -32,14 +33,24 @@ fn hub_url(state: tauri::State<'_, HubSidecarState>) -> Result<String, String> {
     Ok(format!("http://127.0.0.1:{port}"))
 }
 
+#[tauri::command]
+fn hub_token(state: tauri::State<'_, HubSidecarState>) -> Result<Option<String>, String> {
+    state
+        .token
+        .lock()
+        .map(|token| token.clone())
+        .map_err(|_| "Hub sidecar state is unavailable".to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(HubSidecarState {
             child: Mutex::new(None),
             port: Mutex::new(configured_hub_port()),
+            token: Mutex::new(configured_hub_token()),
         })
-        .invoke_handler(tauri::generate_handler![hub_url])
+        .invoke_handler(tauri::generate_handler![hub_url, hub_token])
         .setup(|_app| {
             #[cfg(not(debug_assertions))]
             start_hub_sidecar(_app.handle())?;
@@ -62,12 +73,19 @@ fn start_hub_sidecar(app: &tauri::AppHandle) -> tauri::Result<()> {
         .lock()
         .map_err(|_| tauri::Error::Anyhow(anyhow::anyhow!("Hub sidecar state is unavailable")))?;
     let port_string = port.to_string();
+    let token = state
+        .token
+        .lock()
+        .map_err(|_| tauri::Error::Anyhow(anyhow::anyhow!("Hub sidecar state is unavailable")))?
+        .clone()
+        .ok_or_else(|| tauri::Error::Anyhow(anyhow::anyhow!("Hub token is unavailable")))?;
     let command = app
         .shell()
         .sidecar("aspex-hub")
         .map_err(|error| tauri::Error::Anyhow(anyhow::anyhow!(error)))?
         .args(["hub"])
-        .env("ASPEX_HUB_PORT", &port_string);
+        .env("ASPEX_HUB_PORT", &port_string)
+        .env("ASPEX_HUB_TOKEN", &token);
     let (mut events, child) = command
         .spawn()
         .map_err(|error| tauri::Error::Anyhow(anyhow::anyhow!(error)))?;
@@ -99,7 +117,7 @@ fn start_hub_sidecar(app: &tauri::AppHandle) -> tauri::Result<()> {
         });
     });
 
-    wait_for_hub(port).map_err(|message| {
+    wait_for_hub(port, &token).map_err(|message| {
         stop_hub_sidecar(app);
         tauri::Error::Anyhow(anyhow::anyhow!(message))
     })
@@ -118,11 +136,11 @@ fn stop_hub_sidecar(app: &tauri::AppHandle) {
 }
 
 #[cfg(not(debug_assertions))]
-fn wait_for_hub(port: u16) -> Result<(), String> {
+fn wait_for_hub(port: u16, token: &str) -> Result<(), String> {
     let started_at = Instant::now();
 
     while started_at.elapsed() < HUB_STARTUP_TIMEOUT {
-        if health_check(port) {
+        if health_check(port, token) {
             return Ok(());
         }
 
@@ -135,7 +153,7 @@ fn wait_for_hub(port: u16) -> Result<(), String> {
 }
 
 #[cfg(not(debug_assertions))]
-fn health_check(port: u16) -> bool {
+fn health_check(port: u16, token: &str) -> bool {
     let addr = match ("127.0.0.1", port).to_socket_addrs() {
         Ok(mut addrs) => match addrs.next() {
             Some(addr) => addr,
@@ -149,9 +167,11 @@ fn health_check(port: u16) -> bool {
     };
 
     let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
-    let request = b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    let request = format!(
+        "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+    );
 
-    if stream.write_all(request).is_err() {
+    if stream.write_all(request.as_bytes()).is_err() {
         return false;
     }
 
@@ -169,4 +189,32 @@ fn configured_hub_port() -> u16 {
         .and_then(|value| value.parse::<u16>().ok())
         .filter(|port| *port > 0)
         .unwrap_or(DEFAULT_HUB_PORT)
+}
+
+fn configured_hub_token() -> Option<String> {
+    if let Ok(token) = std::env::var("ASPEX_HUB_TOKEN") {
+        let trimmed = token.trim();
+
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        return Some(generate_hub_token());
+    }
+
+    #[cfg(debug_assertions)]
+    {
+        None
+    }
+}
+
+#[cfg(not(debug_assertions))]
+fn generate_hub_token() -> String {
+    let mut bytes = [0_u8; 32];
+    getrandom::getrandom(&mut bytes).expect("failed to generate Hub token");
+
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }

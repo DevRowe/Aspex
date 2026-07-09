@@ -58,7 +58,7 @@ function presentedToken(c: Context): string | undefined {
     }
   }
 
-  const query = c.req.query("token");
+  const query = c.req.path === "/stream" ? c.req.query("token") : undefined;
 
   if (typeof query === "string" && query !== "") {
     return query;
