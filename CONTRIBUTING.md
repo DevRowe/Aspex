@@ -48,6 +48,15 @@ bun run --cwd apps/desktop dev
 Future Labs work such as voice, spatial UI, preview isolation, and delegation
 belongs in later-phase planning until it has explicit task cards.
 
+## Build Artifacts
+
+Do not commit build artifacts.
+In particular, the Tauri Hub sidecar binaries under
+`apps/desktop/src-tauri/binaries/` are produced by `bun build --compile` at
+package time (ADR-0008) and are gitignored; a checked-in copy bloats the repo and
+goes stale.
+See `apps/desktop/src-tauri/binaries/README.md`.
+
 ## Dependency Changes
 
 When adding or replacing a dependency:

@@ -8,3 +8,7 @@ apps/desktop/src-tauri/gen/schemas/
 __pycache__/
 .pytest_cache/
 *.pyc
+
+# Tauri sidecar binaries are build artifacts (bun build --compile), never committed.
+apps/desktop/src-tauri/binaries/*
+!apps/desktop/src-tauri/binaries/README.md
