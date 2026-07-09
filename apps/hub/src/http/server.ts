@@ -14,6 +14,7 @@ import type { PreviewBroker } from "../preview/broker";
 import type { PreviewRegistry } from "../preview/registry";
 import type { VoiceGateway } from "../voice/gateway";
 import type { WorldModel } from "../world/worldModel";
+import { hubAuth } from "./auth";
 import { registerPreviewRoutes, subscribePreviewEvents } from "./preview";
 import { createStateStream } from "./sse";
 import { registerVoiceRoutes } from "./voice";
@@ -23,6 +24,9 @@ export interface ServerDeps {
   bus: Bus;
   cap: number;
   version: string;
+  // Local bearer token required on every endpoint (ADR-0023). When omitted the
+  // app is unauthenticated; the Hub boot path always supplies one.
+  authToken?: string;
   dispatchAction: (
     itemId: string,
     actionId: string,
@@ -66,6 +70,10 @@ export function buildApp(deps: ServerDeps): Hono {
           : undefined,
     }),
   );
+
+  if (deps.authToken !== undefined && deps.authToken !== "") {
+    app.use("*", hubAuth(deps.authToken));
+  }
 
   app.get("/health", (c) => c.json({ ok: true, version: deps.version }));
   app.get("/config", (c) =>

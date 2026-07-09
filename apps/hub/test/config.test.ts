@@ -6,6 +6,7 @@ import {
   DEFAULT_CONFIG,
   expandHome,
   loadConfig,
+  persistHubToken,
   resolvedLivenessConfig,
 } from "../src/config";
 
@@ -646,5 +647,82 @@ describe("hub config", () => {
     expect(expandHome("relative.json")).toBe("relative.json");
     expect(expandHome("~")).not.toBe("~");
     expect(expandHome("~/aspex.json")).not.toContain("~");
+  });
+
+  test("reads the auth token from the config file", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "aspex-config-auth-"));
+    const configPath = join(dir, "config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({ auth: { token: "file-tok" } }),
+    );
+
+    try {
+      const cfg = await loadConfig({ configPath, env: {} });
+      expect(cfg.auth).toEqual({ token: "file-tok" });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("ASPEX_HUB_TOKEN overrides the config file token", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "aspex-config-auth-env-"));
+    const configPath = join(dir, "config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({ auth: { token: "file-tok" } }),
+    );
+
+    try {
+      const cfg = await loadConfig({
+        configPath,
+        env: { ASPEX_HUB_TOKEN: "env-tok" },
+      });
+      expect(cfg.auth).toEqual({ token: "env-tok" });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects an empty ASPEX_HUB_TOKEN", async () => {
+    await expect(loadConfig({ env: { ASPEX_HUB_TOKEN: "" } })).rejects.toThrow(
+      "ASPEX_HUB_TOKEN must be a non-empty string",
+    );
+  });
+
+  test("rejects an empty auth.token in the config file", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "aspex-config-auth-empty-"));
+    const configPath = join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify({ auth: { token: "" } }));
+
+    try {
+      await expect(loadConfig({ configPath, env: {} })).rejects.toThrow(
+        "auth.token must be a non-empty string when auth is configured",
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("persistHubToken writes the token and preserves other keys", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "aspex-config-persist-"));
+    const configPath = join(dir, "nested", "config.json");
+
+    try {
+      await persistHubToken(configPath, "generated-tok");
+      const first = await loadConfig({ configPath, env: {} });
+      expect(first.auth).toEqual({ token: "generated-tok" });
+
+      await writeFile(
+        configPath,
+        JSON.stringify({ hubPort: 5555, auth: { token: "old" } }),
+      );
+      await persistHubToken(configPath, "rotated-tok");
+      const second = await loadConfig({ configPath, env: {} });
+      expect(second.hubPort).toBe(5555);
+      expect(second.auth).toEqual({ token: "rotated-tok" });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

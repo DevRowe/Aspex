@@ -13,7 +13,10 @@ import {
   type PreviewConfig,
   type VoiceConfig,
   loadConfig,
+  persistHubToken,
+  resolveConfigPath,
 } from "./config";
+import { generateHubToken } from "./http/auth";
 import type { PreviewEngine } from "./preview/engine";
 import { createDockerEngine } from "./preview/engineDocker";
 import { createMockEngine } from "./preview/engineMock";
@@ -233,7 +236,12 @@ async function runPreviewCheck(options: {
 
 async function runPreviewList(options: { configPath?: string }): Promise<void> {
   const cfg = await loadConfig({ configPath: options.configPath });
-  const response = await fetch(`http://127.0.0.1:${cfg.hubPort}/previews`);
+  const response = await fetch(`http://127.0.0.1:${cfg.hubPort}/previews`, {
+    headers:
+      cfg.auth?.token !== undefined
+        ? { authorization: `Bearer ${cfg.auth.token}` }
+        : {},
+  });
 
   if (response.status === 404) {
     console.log("Preview Deck disabled or unavailable on the running Hub.");
@@ -680,17 +688,41 @@ async function runRelayCommand(options: {
       hubPort: cfg.hubPort,
       source,
       jsonArg: options.jsonArg,
+      token: cfg.auth?.token,
     });
   } catch (_error) {
     return;
   }
 }
 
+// Guarantee the running Hub always has a bearer token (ADR-0023). A token
+// supplied via config file or ASPEX_HUB_TOKEN is used as-is; otherwise one is
+// generated on first boot and persisted to the config file. The env token is
+// never written to disk.
+async function ensureHubToken(
+  cfg: Awaited<ReturnType<typeof loadConfig>>,
+  configPath?: string,
+): Promise<Awaited<ReturnType<typeof loadConfig>>> {
+  if (cfg.auth?.token !== undefined) {
+    return cfg;
+  }
+
+  const token = generateHubToken();
+  const path = resolveConfigPath(configPath);
+  await persistHubToken(path, token);
+  console.log(`Aspex Hub generated a local API token in ${path}`);
+
+  return { ...cfg, auth: { token } };
+}
+
 async function runHub(options: {
   configPath?: string;
   mock?: boolean;
 }): Promise<void> {
-  const cfg = await loadConfig(options);
+  const cfg = await ensureHubToken(
+    await loadConfig(options),
+    options.configPath,
+  );
   const hub = buildHub(cfg);
   let stopping = false;
   let server: ReturnType<typeof Bun.serve> | null = null;

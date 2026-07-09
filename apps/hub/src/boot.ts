@@ -159,6 +159,7 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
     bus,
     cap: cfg.needsMeCap,
     version: VERSION,
+    authToken: cfg.auth?.token,
     dispatchAction: registry.dispatchAction.bind(registry),
     actionMeta: registry.actionMeta.bind(registry),
     voiceGateway,

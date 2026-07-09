@@ -133,6 +133,30 @@ describe("hub boot", () => {
     }
   });
 
+  test("enforces the configured auth token across endpoints", async () => {
+    const hub = buildHub({
+      ...DEFAULT_CONFIG,
+      dbPath: ":memory:",
+      auth: { token: "boot-token" },
+    });
+
+    try {
+      await hub.start();
+
+      const unauth = await hub.app.fetch(new Request("http://hub.test/state"));
+      const authed = await hub.app.fetch(
+        new Request("http://hub.test/state", {
+          headers: { authorization: "Bearer boot-token" },
+        }),
+      );
+
+      expect(unauth.status).toBe(401);
+      expect(authed.status).toBe(200);
+    } finally {
+      await hub.stop();
+    }
+  });
+
   test("does not mount preview routes when previews are disabled", async () => {
     const hub = buildHub({ ...DEFAULT_CONFIG, dbPath: ":memory:" });
 
