@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -726,15 +726,35 @@ describe("hub config", () => {
     }
   });
 
-  test("persistHubToken restricts config file and directory permissions", async () => {
+  test("persistHubToken restricts default config file and directory permissions", async () => {
     const dir = await mkdtemp(join(tmpdir(), "aspex-config-auth-mode-"));
     const configDir = join(dir, ".aspex");
     const configPath = join(configDir, "config.json");
 
     try {
-      await persistHubToken(configPath, "generated-tok");
+      await persistHubToken(configPath, "generated-tok", {
+        defaultConfigPath: configPath,
+      });
 
       expect(permissionBits((await stat(configDir)).mode)).toBe(0o700);
+      expect(permissionBits((await stat(configPath)).mode)).toBe(0o600);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("persistHubToken does not chmod explicit config directories", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "aspex-config-explicit-mode-"));
+    const configDir = join(dir, "shared");
+    const configPath = join(configDir, "config.json");
+
+    try {
+      await writeFile(join(dir, ".keep"), "");
+      await mkdir(configDir, { recursive: true });
+      await chmod(configDir, 0o755);
+      await persistHubToken(configPath, "generated-tok");
+
+      expect(permissionBits((await stat(configDir)).mode)).toBe(0o755);
       expect(permissionBits((await stat(configPath)).mode)).toBe(0o600);
     } finally {
       await rm(dir, { recursive: true, force: true });

@@ -5,8 +5,13 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 use std::sync::Mutex;
 
+use serde_json::{Map, Value};
 use tauri::{Manager, RunEvent};
 use tauri_plugin_shell::process::CommandChild;
 #[cfg(not(debug_assertions))]
@@ -196,25 +201,215 @@ fn configured_hub_token() -> Option<String> {
         let trimmed = token.trim();
 
         if !trimmed.is_empty() {
+            if let Some(path) = default_hub_config_path() {
+                persist_hub_token(&path, trimmed)
+                    .expect("failed to persist ASPEX_HUB_TOKEN to Hub config");
+            }
             return Some(trimmed.to_string());
         }
     }
 
     #[cfg(not(debug_assertions))]
     {
-        return Some(generate_hub_token());
+        let path = default_hub_config_path().expect("failed to resolve Hub config path");
+        return Some(
+            persisted_or_generated_hub_token(&path)
+                .expect("failed to resolve Hub token from config"),
+        );
     }
 
     #[cfg(debug_assertions)]
     {
-        None
+        default_hub_config_path()
+            .and_then(|path| read_hub_token_from_config(&path).ok().flatten())
     }
 }
 
-#[cfg(not(debug_assertions))]
 fn generate_hub_token() -> String {
     let mut bytes = [0_u8; 32];
     getrandom::getrandom(&mut bytes).expect("failed to generate Hub token");
 
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn default_hub_config_path() -> Option<PathBuf> {
+    home_dir().map(|home| home.join(".aspex").join("config.json"))
+}
+
+fn home_dir() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            env::var_os("USERPROFILE")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+        })
+        .or_else(|| {
+            let drive = env::var_os("HOMEDRIVE")?;
+            let path = env::var_os("HOMEPATH")?;
+
+            if drive.is_empty() || path.is_empty() {
+                return None;
+            }
+
+            let mut home = drive;
+            home.push(path);
+            Some(PathBuf::from(home))
+        })
+}
+
+fn persisted_or_generated_hub_token(path: &Path) -> Result<String, String> {
+    persisted_or_generated_hub_token_with(path, generate_hub_token)
+}
+
+fn persisted_or_generated_hub_token_with<F>(path: &Path, generate: F) -> Result<String, String>
+where
+    F: FnOnce() -> String,
+{
+    if let Some(token) = read_hub_token_from_config(path)? {
+        return Ok(token);
+    }
+
+    let token = generate();
+    persist_hub_token(path, &token)?;
+
+    Ok(token)
+}
+
+fn read_hub_token_from_config(path: &Path) -> Result<Option<String>, String> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let raw = fs::read_to_string(path)
+        .map_err(|error| format!("failed to read Hub config {}: {error}", path.display()))?;
+    let parsed: Value = serde_json::from_str(&raw)
+        .map_err(|error| format!("failed to parse Hub config {}: {error}", path.display()))?;
+    let Some(auth) = parsed.get("auth") else {
+        return Ok(None);
+    };
+    let Some(token) = auth.get("token").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let trimmed = token.trim();
+
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(trimmed.to_string()))
+}
+
+fn persist_hub_token(path: &Path, token: &str) -> Result<(), String> {
+    let mut config = if path.exists() {
+        let raw = fs::read_to_string(path)
+            .map_err(|error| format!("failed to read Hub config {}: {error}", path.display()))?;
+        match serde_json::from_str::<Value>(&raw)
+            .map_err(|error| format!("failed to parse Hub config {}: {error}", path.display()))?
+        {
+            Value::Object(object) => object,
+            _ => return Err("Hub config must contain a JSON object".to_string()),
+        }
+    } else {
+        Map::new()
+    };
+
+    let mut auth = match config.remove("auth") {
+        Some(Value::Object(object)) => object,
+        _ => Map::new(),
+    };
+    auth.insert("token".to_string(), Value::String(token.to_string()));
+    config.insert("auth".to_string(), Value::Object(auth));
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("Hub config path has no parent: {}", path.display()))?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("failed to create Hub config directory: {error}"))?;
+    set_secure_directory_permissions(parent)?;
+
+    let serialized = serde_json::to_string_pretty(&Value::Object(config))
+        .map_err(|error| format!("failed to serialize Hub config: {error}"))?;
+    fs::write(path, format!("{serialized}\n"))
+        .map_err(|error| format!("failed to write Hub config {}: {error}", path.display()))?;
+    set_secure_file_permissions(path)?;
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_secure_directory_permissions(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .map_err(|error| format!("failed to set Hub config directory permissions: {error}"))
+}
+
+#[cfg(not(unix))]
+fn set_secure_directory_permissions(_path: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_secure_file_permissions(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        .map_err(|error| format!("failed to set Hub config permissions: {error}"))
+}
+
+#[cfg(not(unix))]
+fn set_secure_file_permissions(_path: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn reads_existing_hub_token_from_config() {
+        let dir = temp_dir("read");
+        let path = dir.join("config.json");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            &path,
+            r#"{"hubPort":5555,"auth":{"token":"stored-token"}}"#,
+        )
+        .unwrap();
+
+        let token = read_hub_token_from_config(&path).unwrap();
+
+        assert_eq!(token.as_deref(), Some("stored-token"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn generated_hub_token_is_persisted_to_config() {
+        let dir = temp_dir("generate");
+        let path = dir.join("config.json");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(&path, r#"{"hubPort":5555}"#).unwrap();
+
+        let token =
+            persisted_or_generated_hub_token_with(&path, || "generated-token".to_string())
+                .unwrap();
+        let config = fs::read_to_string(&path).unwrap();
+
+        assert_eq!(token, "generated-token");
+        assert!(config.contains(r#""hubPort": 5555"#));
+        assert!(config.contains(r#""token": "generated-token""#));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+
+        std::env::temp_dir().join(format!("aspex-desktop-{name}-{unique}"))
+    }
 }

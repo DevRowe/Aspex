@@ -197,6 +197,9 @@ export function resolveConfigPath(configPath?: string): string {
 export async function persistHubToken(
   path: string,
   token: string,
+  {
+    defaultConfigPath = DEFAULT_CONFIG_PATH,
+  }: { defaultConfigPath?: string } = {},
 ): Promise<void> {
   const existing = await readConfigFile(path, false);
   const next = {
@@ -205,8 +208,15 @@ export async function persistHubToken(
   };
 
   const directory = dirname(path);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  await chmod(directory, 0o700);
+  const ownsDirectory =
+    resolve(path) === resolve(expandHome(defaultConfigPath));
+  await mkdir(directory, {
+    recursive: true,
+    ...(ownsDirectory ? { mode: 0o700 } : {}),
+  });
+  if (ownsDirectory) {
+    await chmod(directory, 0o700);
+  }
   await writeFile(path, `${JSON.stringify(next, null, 2)}\n`, {
     encoding: "utf8",
     mode: 0o600,
