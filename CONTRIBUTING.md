@@ -20,12 +20,15 @@ bun test
 bun run lint
 ```
 
-Run mock mode while developing the cockpit:
+Run mock mode while developing the legacy browser cockpit:
 
 ```sh
 bun apps/hub/src/cli.ts hub --mock
-bun run --cwd apps/web dev
+VITE_HUB_TOKEN="$(bun --print 'JSON.parse(await Bun.file(process.env.HOME + "/.aspex/config.json").text()).auth.token')" bun run --cwd apps/web dev
 ```
+
+The token export is only needed for the legacy browser dev flow because Vite cannot read the Hub token from Tauri.
+The Tauri desktop shell resolves the token automatically through its `hub_token` command.
 
 Desktop development uses a separately running Hub:
 

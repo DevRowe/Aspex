@@ -139,12 +139,6 @@ async function resolveHubUrl(): Promise<string> {
 }
 
 async function resolveHubToken(): Promise<string | undefined> {
-  const configured = import.meta.env.VITE_HUB_TOKEN;
-
-  if (typeof configured === "string" && configured.trim() !== "") {
-    return configured.trim();
-  }
-
   const invoke =
     typeof window === "undefined"
       ? undefined
@@ -154,6 +148,12 @@ async function resolveHubToken(): Promise<string | undefined> {
     const token = await invoke<string | null>("hub_token");
     const trimmed = token?.trim();
     return trimmed === undefined || trimmed === "" ? undefined : trimmed;
+  }
+
+  const configured = import.meta.env.VITE_HUB_TOKEN;
+
+  if (typeof configured === "string" && configured.trim() !== "") {
+    return configured.trim();
   }
 
   return undefined;
