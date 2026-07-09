@@ -7,6 +7,7 @@ use std::{
 };
 use std::{
     env, fs,
+    ffi::OsString,
     path::{Path, PathBuf},
 };
 use std::sync::Mutex;
@@ -239,26 +240,34 @@ fn default_hub_config_path() -> Option<PathBuf> {
 }
 
 fn home_dir() -> Option<PathBuf> {
-    env::var_os("HOME")
+    home_dir_from_env(env::var_os, cfg!(windows))
+}
+
+fn home_dir_from_env<F>(mut var: F, windows: bool) -> Option<PathBuf>
+where
+    F: FnMut(&str) -> Option<OsString>,
+{
+    if windows {
+        return var("USERPROFILE")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| {
+                let drive = var("HOMEDRIVE")?;
+                let path = var("HOMEPATH")?;
+
+                if drive.is_empty() || path.is_empty() {
+                    return None;
+                }
+
+                let mut home = drive;
+                home.push(path);
+                Some(PathBuf::from(home))
+            });
+    }
+
+    var("HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
-        .or_else(|| {
-            env::var_os("USERPROFILE")
-                .filter(|value| !value.is_empty())
-                .map(PathBuf::from)
-        })
-        .or_else(|| {
-            let drive = env::var_os("HOMEDRIVE")?;
-            let path = env::var_os("HOMEPATH")?;
-
-            if drive.is_empty() || path.is_empty() {
-                return None;
-            }
-
-            let mut home = drive;
-            home.push(path);
-            Some(PathBuf::from(home))
-        })
 }
 
 fn resolve_hub_token<F>(
@@ -344,11 +353,33 @@ fn persist_hub_token(path: &Path, token: &str) -> Result<(), String> {
 
     let serialized = serde_json::to_string_pretty(&Value::Object(config))
         .map_err(|error| format!("failed to serialize Hub config: {error}"))?;
-    fs::write(path, format!("{serialized}\n"))
-        .map_err(|error| format!("failed to write Hub config {}: {error}", path.display()))?;
+    write_secure_config_file(path, &format!("{serialized}\n"))?;
     set_secure_file_permissions(path)?;
 
     Ok(())
+}
+
+#[cfg(unix)]
+fn write_secure_config_file(path: &Path, content: &str) -> Result<(), String> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|error| format!("failed to write Hub config {}: {error}", path.display()))?;
+    file.write_all(content.as_bytes())
+        .map_err(|error| format!("failed to write Hub config {}: {error}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn write_secure_config_file(path: &Path, content: &str) -> Result<(), String> {
+    fs::write(path, content)
+        .map_err(|error| format!("failed to write Hub config {}: {error}", path.display()))
 }
 
 #[cfg(unix)]
@@ -380,6 +411,7 @@ fn set_secure_file_permissions(_path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -447,6 +479,55 @@ mod tests {
         assert_eq!(token, "generated-token");
         assert!(config.contains(r#""hubPort": 5555"#));
         assert!(config.contains(r#""token": "generated-token""#));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn windows_home_dir_matches_node_home_precedence() {
+        let vars = HashMap::from([
+            ("HOME", OsString::from("/msys/home/user")),
+            ("USERPROFILE", OsString::from("C:\\Users\\aspex")),
+        ]);
+
+        let home = home_dir_from_env(|key| vars.get(key).cloned(), true).unwrap();
+
+        assert_eq!(home, PathBuf::from("C:\\Users\\aspex"));
+    }
+
+    #[test]
+    fn unix_home_dir_uses_home() {
+        let vars = HashMap::from([
+            ("HOME", OsString::from("/home/aspex")),
+            ("USERPROFILE", OsString::from("C:\\Users\\aspex")),
+        ]);
+
+        let home = home_dir_from_env(|key| vars.get(key).cloned(), false).unwrap();
+
+        assert_eq!(home, PathBuf::from("/home/aspex"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn generated_hub_token_file_is_created_with_secure_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = temp_dir("secure");
+        let path = dir.join(".aspex").join("config.json");
+
+        persisted_or_generated_hub_token_with(&path, || "generated-token".to_string()).unwrap();
+
+        assert_eq!(
+            fs::metadata(path.parent().unwrap())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
         fs::remove_dir_all(dir).unwrap();
     }
 
