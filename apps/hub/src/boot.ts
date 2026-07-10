@@ -15,6 +15,7 @@ import { Bus } from "./bus";
 import { type AspexConfig, resolvedLivenessConfig } from "./config";
 import { enforceOwnership, rank } from "./engine/attention";
 import { LivenessTicker, livenessAt, nextStaleAfter } from "./engine/liveness";
+import { IntentLedger } from "./http/intentLedger";
 import { type ServerDeps, buildApp } from "./http/server";
 import { createPreviewBroker } from "./preview/broker";
 import type { PreviewEngine } from "./preview/engine";
@@ -122,6 +123,23 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
     new NtfyNotifier(cfg.ntfy, bus);
   }
 
+  // Route actions by item source: orchestrator:* items go to the
+  // orchestrator registry, everything else to the adapter registry. Voice and
+  // HTTP share this composition so orchestrator verbs ride the existing
+  // arm/confirm stack unchanged.
+  const dispatchAction = (
+    itemId: string,
+    actionId: string,
+    payload?: unknown,
+  ) =>
+    orchestrators.ownsItem(itemId)
+      ? orchestrators.dispatchAction(itemId, actionId, payload)
+      : registry.dispatchAction(itemId, actionId, payload);
+  const actionMeta = (itemId: string, actionId: string) =>
+    orchestrators.ownsItem(itemId)
+      ? orchestrators.actionMeta(itemId, actionId)
+      : registry.actionMeta(itemId, actionId);
+
   const intentService =
     cfg.intent?.enabled === true
       ? cfg.intent.mock === true || cfg.mock === true
@@ -150,7 +168,7 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
                       timeoutMs: cfg.voice.stt.timeoutMs,
                     })
                   : null,
-          dispatchAction: registry.dispatchAction.bind(registry),
+          dispatchAction,
           getSelectedActions: (id) =>
             world.snapshot().find((item) => item.id === id)?.actions ?? [],
           resolveProject: (name) =>
@@ -180,8 +198,19 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
     version: VERSION,
     authToken: cfg.auth?.token,
     corsOrigin: cfg.corsOrigin,
-    dispatchAction: registry.dispatchAction.bind(registry),
-    actionMeta: registry.actionMeta.bind(registry),
+    dispatchAction,
+    actionMeta,
+    // A whole-inbox status query answers from the Hub's own ranked
+    // world-model (fast, no orchestrator round-trip); a single-item scope
+    // defers to the owning orchestrator for freshness.
+    intents: {
+      dispatch: (intent) => orchestrators.dispatch(intent),
+      query: async (intent) =>
+        intent.scope === undefined || intent.scope === "needs_me"
+          ? { ok: true, text: needsMeText(world, cfg.needsMeCap) }
+          : orchestrators.query(intent),
+    },
+    intentLedger: new IntentLedger(),
     voiceGateway,
     voice: {
       enabled: cfg.voice?.enabled === true,
@@ -355,6 +384,19 @@ function resolveProjectId(
   );
 
   return sorted[0]?.id ?? null;
+}
+
+// Spoken/rendered "what needs me" summary from the ranked world-model.
+function needsMeText(world: WorldModel, needsMeCap: number): string {
+  const needsMe = rank(world.snapshot(), needsMeCap).needsMe;
+
+  if (needsMe.length === 0) {
+    return "Nothing needs you right now.";
+  }
+
+  const lines = needsMe.map((item) => `${item.project}: ${item.summary}`);
+
+  return `${needsMe.length} need${needsMe.length === 1 ? "s" : ""} you. ${lines.join(" | ")}`;
 }
 
 function readItem(world: WorldModel, id: string): string {
