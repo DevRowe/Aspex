@@ -4,6 +4,9 @@ export type HookRelaySource = "claude-code" | "codex";
 
 export interface HookRelayOptions {
   event?: string;
+  // Host the Hub is reachable at from this machine; loopback unless the Hub
+  // binds a specific interface (ASPEX_HUB_BIND).
+  hubHost?: string;
   hubPort: number;
   source?: HookRelaySource;
   jsonArg?: string;
@@ -34,7 +37,7 @@ export async function runHookRelay(options: HookRelayOptions): Promise<void> {
 
     try {
       await (options.fetch ?? fetch)(
-        `http://127.0.0.1:${options.hubPort}/signals/${source}`,
+        `http://${options.hubHost ?? "127.0.0.1"}:${options.hubPort}/signals/${source}`,
         {
           method: "POST",
           headers: {

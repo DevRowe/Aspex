@@ -168,6 +168,32 @@ describe("hub API auth", () => {
     db.close();
   });
 
+  test("allows the one configured extra CORS origin and no others", async () => {
+    const { app, db } = openAuthedServer({
+      corsOrigin: "http://hl2.tailnet:8080",
+    });
+
+    const preflight = (origin: string) =>
+      app.fetch(
+        new Request("http://hub.test/state", {
+          method: "OPTIONS",
+          headers: {
+            Origin: origin,
+            "Access-Control-Request-Method": "GET",
+          },
+        }),
+      );
+
+    const allowed = await preflight("http://hl2.tailnet:8080");
+    const denied = await preflight("http://evil.example");
+
+    expect(allowed.headers.get("access-control-allow-origin")).toBe(
+      "http://hl2.tailnet:8080",
+    );
+    expect(denied.headers.get("access-control-allow-origin")).toBeNull();
+    db.close();
+  });
+
   test("no token configured leaves endpoints open (test/dev seam)", async () => {
     const { app, db } = openAuthedServer({ authToken: undefined });
 

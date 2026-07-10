@@ -27,6 +27,9 @@ export interface ServerDeps {
   // Local bearer token required on every endpoint (ADR-0023). When omitted the
   // app is unauthenticated; the Hub boot path always supplies one.
   authToken?: string;
+  // One extra exact origin allowed by CORS (the HL2 Edge client), alongside
+  // the built-in tauri://localhost and http://localhost:*.
+  corsOrigin?: string;
   dispatchAction: (
     itemId: string,
     actionId: string,
@@ -65,7 +68,9 @@ export function buildApp(deps: ServerDeps): Hono {
     "*",
     cors({
       origin: (origin) =>
-        origin === "tauri://localhost" || origin.startsWith("http://localhost:")
+        origin === "tauri://localhost" ||
+        origin.startsWith("http://localhost:") ||
+        (deps.corsOrigin !== undefined && origin === deps.corsOrigin)
           ? origin
           : undefined,
       allowHeaders: ["Authorization", "Content-Type"],

@@ -15,6 +15,13 @@ import type { LivenessConfig } from "./engine/liveness";
 
 export interface AspexConfig {
   hubPort: number;
+  // Interface the Hub HTTP server binds to (ADR-0023 tailnet model): loopback
+  // by default; set to the dev box's tailnet address to serve enrolled
+  // devices (the glasses). Never a public interface by default.
+  hubBind: string;
+  // One extra exact origin allowed by CORS, e.g. the HL2 Edge client's
+  // origin, alongside the built-in tauri://localhost and http://localhost:*.
+  corsOrigin?: string;
   dbPath: string;
   needsMeCap: number;
   pollIntervalMs: number;
@@ -134,6 +141,7 @@ const DEFAULT_ADAPTERS_CONFIG: AdaptersConfig = {
 
 export const DEFAULT_CONFIG: AspexConfig = {
   hubPort: 4317,
+  hubBind: "127.0.0.1",
   dbPath: "~/.aspex/aspex.sqlite",
   needsMeCap: 7,
   pollIntervalMs: 60_000,
@@ -562,6 +570,11 @@ function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
     ...cfg,
     auth,
     hubPort: parseInteger(env.ASPEX_HUB_PORT, cfg.hubPort, "ASPEX_HUB_PORT"),
+    hubBind:
+      optionalNonEmptyEnv(env.ASPEX_HUB_BIND, "ASPEX_HUB_BIND") ?? cfg.hubBind,
+    corsOrigin:
+      optionalNonEmptyEnv(env.ASPEX_HUB_CORS_ORIGIN, "ASPEX_HUB_CORS_ORIGIN") ??
+      cfg.corsOrigin,
     dbPath:
       optionalNonEmptyEnv(env.ASPEX_DB_PATH, "ASPEX_DB_PATH") ?? cfg.dbPath,
     needsMeCap: parseInteger(
@@ -615,6 +628,8 @@ function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
 function normalizeConfig(cfg: AspexConfig): AspexConfig {
   const normalized = {
     ...cfg,
+    hubBind: normalizeHubBind(cfg.hubBind),
+    corsOrigin: normalizeCorsOrigin(cfg.corsOrigin),
     dbPath: expandHome(cfg.dbPath),
     voice: normalizeVoiceConfig(cfg.voice, cfg.mock),
     intent: normalizeIntentConfig(cfg.intent, cfg.mock),
@@ -639,6 +654,45 @@ function normalizeConfig(cfg: AspexConfig): AspexConfig {
   }
 
   return normalized;
+}
+
+function normalizeHubBind(bind: unknown): string {
+  if (typeof bind !== "string" || bind.trim() === "") {
+    throw new Error("hubBind must be a non-empty host or address");
+  }
+
+  return bind.trim();
+}
+
+function normalizeCorsOrigin(origin: unknown): string | undefined {
+  if (origin === undefined) {
+    return undefined;
+  }
+
+  if (typeof origin !== "string" || origin.trim() === "") {
+    throw new Error("corsOrigin must be a non-empty origin when set");
+  }
+
+  try {
+    return new URL(origin.trim()).origin;
+  } catch {
+    throw new Error(
+      "corsOrigin must be a valid origin, e.g. http://hl2.tailnet:8080",
+    );
+  }
+}
+
+// The address local CLI clients (hook relay, `aspex preview list`) dial to
+// reach the running Hub. A wildcard bind still serves loopback; a specific
+// bind serves only that address.
+export function hubClientHost(cfg: Pick<AspexConfig, "hubBind">): string {
+  const bind = cfg.hubBind;
+
+  if (bind === "0.0.0.0" || bind === "::" || bind === "*") {
+    return "127.0.0.1";
+  }
+
+  return bind.includes(":") ? `[${bind}]` : bind;
 }
 
 function normalizeAdaptersConfig(

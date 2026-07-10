@@ -160,6 +160,7 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
     cap: cfg.needsMeCap,
     version: VERSION,
     authToken: cfg.auth?.token,
+    corsOrigin: cfg.corsOrigin,
     dispatchAction: registry.dispatchAction.bind(registry),
     actionMeta: registry.actionMeta.bind(registry),
     voiceGateway,

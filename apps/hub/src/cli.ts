@@ -12,6 +12,7 @@ import {
   type IntentConfig,
   type PreviewConfig,
   type VoiceConfig,
+  hubClientHost,
   loadConfig,
   persistHubToken,
   resolveConfigPath,
@@ -236,12 +237,15 @@ async function runPreviewCheck(options: {
 
 async function runPreviewList(options: { configPath?: string }): Promise<void> {
   const cfg = await loadConfig({ configPath: options.configPath });
-  const response = await fetch(`http://127.0.0.1:${cfg.hubPort}/previews`, {
-    headers:
-      cfg.auth?.token !== undefined
-        ? { authorization: `Bearer ${cfg.auth.token}` }
-        : {},
-  });
+  const response = await fetch(
+    `http://${hubClientHost(cfg)}:${cfg.hubPort}/previews`,
+    {
+      headers:
+        cfg.auth?.token !== undefined
+          ? { authorization: `Bearer ${cfg.auth.token}` }
+          : {},
+    },
+  );
 
   if (response.status === 404) {
     console.log("Preview Deck disabled or unavailable on the running Hub.");
@@ -685,6 +689,7 @@ async function runRelayCommand(options: {
 
     await runHookRelay({
       event: options.event,
+      hubHost: hubClientHost(cfg),
       hubPort: cfg.hubPort,
       source,
       jsonArg: options.jsonArg,
@@ -730,7 +735,7 @@ async function runHub(options: {
   try {
     await hub.start();
     server = Bun.serve({
-      hostname: "127.0.0.1",
+      hostname: cfg.hubBind,
       port: cfg.hubPort,
       fetch: hub.app.fetch,
     });
@@ -740,7 +745,7 @@ async function runHub(options: {
     throw error;
   }
 
-  console.log(`Aspex Hub on http://127.0.0.1:${server.port}`);
+  console.log(`Aspex Hub on http://${hubClientHost(cfg)}:${server.port}`);
 
   const stop = async () => {
     if (stopping) {
