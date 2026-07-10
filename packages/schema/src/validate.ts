@@ -9,6 +9,7 @@ const SOURCES = [
   "webhook",
   "ntfy",
   "mcp",
+  "orchestrator",
 ] as const satisfies readonly Source[];
 
 const STATES = [
