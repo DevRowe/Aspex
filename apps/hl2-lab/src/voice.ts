@@ -81,26 +81,42 @@ export class MicrophoneCapture implements Capture {
       releaseStream(stream);
       return;
     }
-    const recorder = new MediaRecorder(stream);
-    const capture: ActiveCapture = {
-      stream,
-      recorder,
-      chunks: [],
-      cancelled: false,
-      cancel: () => this.cancel(capture),
-    };
-    this.activeCapture = capture;
-    setCapture(capture);
-    recorder.addEventListener("dataavailable", (event) => {
-      if (
-        this.activeCapture === capture &&
-        !capture.cancelled &&
-        event.data.size > 0
-      ) {
-        capture.chunks.push(event.data);
+    let capture: ActiveCapture | null = null;
+    try {
+      const recorder = new MediaRecorder(stream);
+      const activeCapture: ActiveCapture = {
+        stream,
+        recorder,
+        chunks: [],
+        cancelled: false,
+        cancel: () => {
+          if (capture !== null) {
+            this.cancel(capture);
+          }
+        },
+      };
+      capture = activeCapture;
+      this.activeCapture = activeCapture;
+      setCapture(activeCapture);
+      recorder.addEventListener("dataavailable", (event) => {
+        if (
+          this.activeCapture === activeCapture &&
+          !activeCapture.cancelled &&
+          event.data.size > 0
+        ) {
+          activeCapture.chunks.push(event.data);
+        }
+      });
+      recorder.start();
+    } catch (error) {
+      if (capture === null) {
+        releaseStream(stream);
+      } else {
+        capture.cancelled = true;
+        this.release(capture);
       }
-    });
-    recorder.start();
+      throw error;
+    }
   }
 
   private stop(capture: ActiveCapture): Promise<Blob | null> {

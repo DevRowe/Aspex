@@ -334,6 +334,91 @@ describe("VoiceController", () => {
 });
 
 describe("MicrophoneCapture", () => {
+  test("stops granted tracks when MediaRecorder construction fails", async () => {
+    const originalNavigator = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "navigator",
+    );
+    const originalMediaRecorder = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "MediaRecorder",
+    );
+    const stream = fakeStream();
+
+    class ThrowingRecorder {
+      constructor(_stream: MediaStream) {
+        throw new Error("recorder unavailable");
+      }
+    }
+
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        mediaDevices: { getUserMedia: async () => stream.stream },
+      },
+    });
+    Object.defineProperty(globalThis, "MediaRecorder", {
+      configurable: true,
+      value: ThrowingRecorder,
+    });
+
+    try {
+      const session = new MicrophoneCapture().start();
+      await expect(session.ready()).rejects.toThrow("recorder unavailable");
+      expect(stream.stopped()).toBe(true);
+    } finally {
+      restoreGlobal("navigator", originalNavigator);
+      restoreGlobal("MediaRecorder", originalMediaRecorder);
+    }
+  });
+
+  test("stops granted tracks and releases ownership when recorder start fails", async () => {
+    const originalNavigator = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "navigator",
+    );
+    const originalMediaRecorder = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "MediaRecorder",
+    );
+    const stream = fakeStream();
+
+    class ThrowingRecorder {
+      state: RecordingState = "inactive";
+      mimeType = "audio/webm";
+
+      addEventListener(): void {}
+
+      start(): void {
+        throw new Error("recorder failed to start");
+      }
+    }
+
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        mediaDevices: { getUserMedia: async () => stream.stream },
+      },
+    });
+    Object.defineProperty(globalThis, "MediaRecorder", {
+      configurable: true,
+      value: ThrowingRecorder,
+    });
+
+    try {
+      const capture = new MicrophoneCapture();
+      const session = capture.start();
+      await expect(session.ready()).rejects.toThrow("recorder failed to start");
+      expect(stream.stopped()).toBe(true);
+      expect(
+        (capture as unknown as { activeCapture: unknown }).activeCapture,
+      ).toBeNull();
+    } finally {
+      restoreGlobal("navigator", originalNavigator);
+      restoreGlobal("MediaRecorder", originalMediaRecorder);
+    }
+  });
+
   test("does not let a cancelled permission request stop a newer capture", async () => {
     const originalNavigator = Object.getOwnPropertyDescriptor(
       globalThis,

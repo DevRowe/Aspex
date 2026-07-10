@@ -261,6 +261,49 @@ describe("reduce", () => {
     });
   });
 
+  test("assigns distinct fallback IDs to independent commands in one millisecond", () => {
+    const randomUuids = [
+      "00000000-0000-4000-8000-000000000001",
+      "00000000-0000-4000-8000-000000000002",
+    ];
+    const sameMillisecond = meta({
+      randomUuid: () => {
+        const uuid = randomUuids.shift();
+        if (uuid === undefined) {
+          throw new Error("Unexpected fallback intent ID request.");
+        }
+        return uuid;
+      },
+    });
+    const first = reduce(
+      {},
+      {
+        kind: "dispatch_task",
+        orchestrator: "giles",
+        instruction: "build the wear test",
+      },
+      sameMillisecond,
+    );
+    const second = reduce(
+      {},
+      {
+        kind: "dispatch_task",
+        orchestrator: "giles",
+        instruction: "check the wear test",
+      },
+      sameMillisecond,
+    );
+    const firstId = first.next.pendingDispatch?.intentId;
+    const secondId = second.next.pendingDispatch?.intentId;
+
+    expect(firstId).toBe(
+      `voice-${now.toString(36)}-00000000-0000-4000-8000-000000000001`,
+    );
+    expect(secondId).toBe(
+      `voice-${now.toString(36)}-00000000-0000-4000-8000-000000000002`,
+    );
+  });
+
   test("consequential redirect dictation arms with text and intent id instead of dispatching", () => {
     const dictating = reduce(
       {},

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { isMergeWord } from "@aspex/schema";
 import type {
   ClientDirective,
@@ -36,6 +37,7 @@ export type Effect =
 export interface ReduceMeta {
   now: number;
   confirmTtlMs: number;
+  randomUuid?: () => string;
   requiresConfirmation: (itemId: ItemId, actionId: string) => boolean;
   actionLabel: (itemId: ItemId, actionId: string) => string;
 }
@@ -207,7 +209,8 @@ export function reduce(
     }
 
     case "dispatch_task": {
-      const intentId = intent.intentId ?? fallbackIntentId(meta.now);
+      const intentId =
+        intent.intentId ?? fallbackIntentId(meta.now, meta.randomUuid);
       return {
         next: {
           pendingDispatch: {
@@ -248,7 +251,8 @@ export function reduce(
         next: withoutPendingDispatch(withoutPendingConfirm(current)),
         effect: {
           kind: "queryIntent",
-          intentId: intent.intentId ?? fallbackIntentId(meta.now),
+          intentId:
+            intent.intentId ?? fallbackIntentId(meta.now, meta.randomUuid),
         },
       };
 
@@ -383,6 +387,9 @@ function confirmationPayload(
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-function fallbackIntentId(now: number): string {
-  return `voice-${now.toString(36)}`;
+function fallbackIntentId(
+  now: number,
+  randomUuid: () => string = randomUUID,
+): string {
+  return `voice-${now.toString(36)}-${randomUuid()}`;
 }
