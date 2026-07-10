@@ -9,7 +9,10 @@ const context: VoiceContext = {
   selectedId: "github:pr:brocorp/aspex#28",
   needsMeIds: ["github:pr:brocorp/aspex#28"],
 };
-const voiceHeaders = { "x-aspex-voice-session": "voice-http-test-1" };
+const voiceHeaders = {
+  "x-aspex-voice-session": "voice-http-test-1",
+  "x-aspex-voice-generation": "1",
+};
 
 describe("hub HTTP voice routes", () => {
   test("POST /voice/utterance returns audioUrl and cached WAV bytes", async () => {
@@ -204,6 +207,7 @@ describe("hub HTTP voice routes", () => {
   test("passes a filename-safe client intent id to the voice gateway", async () => {
     let receivedIntentId: string | undefined;
     let receivedSessionId: string | undefined;
+    let receivedGeneration: number | undefined;
     const gateway = {
       handle: async (
         _audio: Uint8Array,
@@ -211,9 +215,11 @@ describe("hub HTTP voice routes", () => {
         _context: VoiceContext,
         intentId?: string,
         clientSessionId?: string,
+        generation?: number,
       ) => {
         receivedIntentId = intentId;
         receivedSessionId = clientSessionId;
+        receivedGeneration = generation;
         return voiceResult();
       },
     } as unknown as VoiceGateway;
@@ -230,6 +236,7 @@ describe("hub HTTP voice routes", () => {
     expect(response.status).toBe(200);
     expect(receivedIntentId).toBe("hl2-voice-1");
     expect(receivedSessionId).toBe("voice-http-test-1");
+    expect(receivedGeneration).toBe(1);
   });
 
   test("rejects voice requests without a client session", async () => {
@@ -249,10 +256,12 @@ describe("hub HTTP voice routes", () => {
   test("POST /voice/cancel clears a server-side arm without dispatching", async () => {
     let cancels = 0;
     let receivedSessionId: string | undefined;
+    let receivedGeneration: number | undefined;
     const gateway = {
-      cancel: async (clientSessionId?: string) => {
+      cancel: async (clientSessionId?: string, generation?: number) => {
         cancels += 1;
         receivedSessionId = clientSessionId;
+        receivedGeneration = generation;
         return voiceResult();
       },
     } as unknown as VoiceGateway;
@@ -266,6 +275,7 @@ describe("hub HTTP voice routes", () => {
     expect(response.status).toBe(200);
     expect(cancels).toBe(1);
     expect(receivedSessionId).toBe("voice-http-test-1");
+    expect(receivedGeneration).toBe(1);
   });
 });
 

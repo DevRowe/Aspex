@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { Action, ActionResult, ItemId } from "@aspex/schema";
+import type { Action, ActionResult, ItemId, Transcript } from "@aspex/schema";
 import { type GatewayDeps, VoiceGateway } from "../src/voice/gateway";
 import { MockSttClient, type SttClient } from "../src/voice/sttClient";
 import { MockTtsClient, type TtsClient } from "../src/voice/ttsClient";
@@ -124,6 +124,44 @@ describe("VoiceGateway", () => {
     expect(dispatchAction).toHaveBeenCalledWith(itemId, "merge", {
       confirmed: true,
     });
+  });
+
+  test("does not restore a cancelled session when transcription finishes late", async () => {
+    let completeTranscription: (transcript: Transcript) => void;
+    const transcription = new Promise<Transcript>((resolve) => {
+      completeTranscription = resolve;
+    });
+    const stt: SttClient = {
+      transcribe: () => transcription,
+    };
+    const { gateway, dispatchAction } = makeGateway([], { stt });
+    const context = { selectedId: itemId, needsMeIds: [itemId] };
+
+    const pending = gateway.handle(
+      audio,
+      "audio/webm",
+      context,
+      undefined,
+      "client-race",
+      1,
+    );
+    await gateway.cancel("client-race", 2);
+    completeTranscription({ text: "merge", confidence: 1 });
+
+    expect(await pending).toMatchObject({
+      ok: true,
+      readback: "Cancelled.",
+      session: {},
+    });
+    const followUp = await gateway.handleText(
+      "confirm merge",
+      context,
+      undefined,
+      "client-race",
+      3,
+    );
+    expect(followUp.session).toEqual({});
+    expect(dispatchAction).not.toHaveBeenCalled();
   });
 
   test("ship requires a spoken merge word and forwards it with confirmation", async () => {

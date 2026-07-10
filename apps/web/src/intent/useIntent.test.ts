@@ -61,6 +61,10 @@ describe("intent client", () => {
     expect(request?.method).toBe("POST");
     expect(request?.url).toBe("http://127.0.0.1:4317/intent");
     expect(request?.headers.get("content-type")).toBe("application/json");
+    expect(request?.headers.get("x-aspex-voice-session")).toMatch(/^web-/);
+    expect(request?.headers.get("x-aspex-voice-generation")).toMatch(
+      /^[1-9]\d*$/,
+    );
     expect(await request?.json()).toEqual({
       text: "what needs me",
       context: {

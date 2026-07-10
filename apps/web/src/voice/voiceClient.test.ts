@@ -40,6 +40,9 @@ describe("voiceClient", () => {
     expect(request?.method).toBe("POST");
     expect(request?.url).toBe("http://127.0.0.1:4317/voice/utterance");
     expect(request?.headers.get("x-aspex-voice-session")).toMatch(/^web-/);
+    expect(request?.headers.get("x-aspex-voice-generation")).toMatch(
+      /^[1-9]\d*$/,
+    );
 
     const body = await request?.formData();
     expect((body?.get("audio") as File).name).toBe("utterance.webm");

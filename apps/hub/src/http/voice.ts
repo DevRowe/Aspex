@@ -32,6 +32,7 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
       context: VoiceContext;
       intentId?: string;
       clientSessionId: string;
+      generation: number;
     };
 
     try {
@@ -43,6 +44,9 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
       const clientSessionId = readClientSessionId(
         c.req.header("x-aspex-voice-session"),
       );
+      const generation = readVoiceGeneration(
+        c.req.header("x-aspex-voice-generation"),
+      );
 
       if (!isFileLike(audio)) {
         return c.json({ message: "Missing audio" }, 400);
@@ -53,6 +57,7 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
         mime: audio.type,
         context,
         clientSessionId,
+        generation,
         ...(intentId !== undefined ? { intentId } : {}),
       };
     } catch (error) {
@@ -65,6 +70,7 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
       request.context,
       request.intentId,
       request.clientSessionId,
+      request.generation,
     );
     return c.json(cacheAudioResult(result, audioCache));
   });
@@ -78,6 +84,7 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
       text: string;
       context: VoiceContext;
       clientSessionId: string;
+      generation: number;
     };
 
     try {
@@ -97,6 +104,9 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
         clientSessionId: readClientSessionId(
           c.req.header("x-aspex-voice-session"),
         ),
+        generation: readVoiceGeneration(
+          c.req.header("x-aspex-voice-generation"),
+        ),
       };
     } catch (error) {
       return c.json({ message: validationMessage(error) }, 400);
@@ -107,6 +117,7 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
       request.context,
       undefined,
       request.clientSessionId,
+      request.generation,
     );
     return c.json(cacheAudioResult(result, audioCache));
   });
@@ -119,9 +130,12 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
       const clientSessionId = readClientSessionId(
         c.req.header("x-aspex-voice-session"),
       );
+      const generation = readVoiceGeneration(
+        c.req.header("x-aspex-voice-generation"),
+      );
       return c.json(
         cacheAudioResult(
-          await deps.voiceGateway.cancel(clientSessionId),
+          await deps.voiceGateway.cancel(clientSessionId, generation),
           audioCache,
         ),
       );
@@ -194,6 +208,17 @@ function readClientSessionId(value: string | undefined): string {
     throw new Error("Invalid voice session");
   }
   return value;
+}
+
+function readVoiceGeneration(value: string | undefined): number {
+  if (value === undefined || !/^[1-9]\d*$/.test(value)) {
+    throw new Error("Invalid voice generation");
+  }
+  const generation = Number(value);
+  if (!Number.isSafeInteger(generation)) {
+    throw new Error("Invalid voice generation");
+  }
+  return generation;
 }
 
 function cleanupAudioCache(

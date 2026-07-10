@@ -201,6 +201,7 @@ describe("hub boot", () => {
           headers: {
             "content-type": "application/json",
             "x-aspex-voice-session": "boot-intent-test-1",
+            "x-aspex-voice-generation": "1",
           },
           body: JSON.stringify({
             text: "what needs me",

@@ -301,6 +301,7 @@ function jsonRequest(path: string, body: unknown): Request {
     headers: {
       "content-type": "application/json",
       "x-aspex-voice-session": "intent-http-test-1",
+      "x-aspex-voice-generation": "1",
     },
     body: JSON.stringify(body),
   });

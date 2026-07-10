@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { type Capture, VoiceController } from "./voice";
+import { type Capture, MicrophoneCapture, VoiceController } from "./voice";
 
 class FakeCapture implements Capture {
   starts = 0;
@@ -189,6 +189,56 @@ describe("VoiceController", () => {
     ]);
   });
 
+  test("ignores a late utterance result after cancelling its upload", async () => {
+    let resolveUtterance: ((response: Response) => void) | undefined;
+    const generations: string[] = [];
+    const controller = new VoiceController(
+      () => ({ hubUrl: "https://hub.test", token: "token" }),
+      () => ({ needsMeIds: [] }),
+      () => undefined,
+      new FakeCapture(),
+      ((input, init) => {
+        const request = new Request(input, init);
+        generations.push(request.headers.get("x-aspex-voice-generation") ?? "");
+        if (request.url.endsWith("/voice/utterance")) {
+          return new Promise<Response>((resolve) => {
+            resolveUtterance = resolve;
+          });
+        }
+        return Promise.resolve(
+          Response.json({ ok: true, readback: "Cancelled.", session: {} }),
+        );
+      }) as typeof fetch,
+    );
+
+    await controller.press();
+    const releasing = controller.release();
+    await Promise.resolve();
+    await controller.cancel();
+    resolveUtterance?.(
+      Response.json({
+        ok: true,
+        readback: "Say confirm ship.",
+        session: {
+          pendingConfirm: {
+            itemId: "item",
+            actionId: "ship",
+            label: "Ship",
+            armedAt: new Date().toISOString(),
+          },
+        },
+      }),
+    );
+    await releasing;
+
+    expect(generations).toEqual(["1", "2"]);
+    expect(controller.snapshot()).toEqual({
+      phase: "idle",
+      message: "Cancelled. Hold to speak",
+      canCancel: false,
+    });
+  });
+
   test("blocks another utterance after an uncertain delivery until cancellation resolves", async () => {
     const capture = new FakeCapture();
     let calls = 0;
@@ -221,3 +271,88 @@ describe("VoiceController", () => {
     expect(capture.starts).toBe(2);
   });
 });
+
+describe("MicrophoneCapture", () => {
+  test("does not include late cancelled recorder chunks in the next capture", async () => {
+    const originalNavigator = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "navigator",
+    );
+    const originalMediaRecorder = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "MediaRecorder",
+    );
+    let recorderCount = 0;
+
+    class FakeRecorder {
+      state: RecordingState = "inactive";
+      mimeType = "audio/webm";
+      private listeners = new Map<
+        string,
+        Array<(event: { data: Blob }) => void>
+      >();
+      private readonly content = recorderCount++ === 0 ? "cancelled" : "kept";
+
+      addEventListener(
+        type: string,
+        listener: (event: { data: Blob }) => void,
+      ): void {
+        const listeners = this.listeners.get(type) ?? [];
+        listeners.push(listener);
+        this.listeners.set(type, listeners);
+      }
+
+      start(): void {
+        this.state = "recording";
+      }
+
+      stop(): void {
+        this.state = "inactive";
+        queueMicrotask(() => {
+          for (const listener of this.listeners.get("dataavailable") ?? []) {
+            listener({ data: new Blob([this.content]) });
+          }
+          for (const listener of this.listeners.get("stop") ?? []) {
+            listener({ data: new Blob() });
+          }
+        });
+      }
+    }
+
+    const stream = {
+      getTracks: () => [{ stop: () => undefined }],
+    } as unknown as MediaStream;
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { mediaDevices: { getUserMedia: async () => stream } },
+    });
+    Object.defineProperty(globalThis, "MediaRecorder", {
+      configurable: true,
+      value: FakeRecorder,
+    });
+
+    try {
+      const capture = new MicrophoneCapture();
+      await capture.start();
+      capture.cancel();
+      await capture.start();
+      const audio = await capture.stop();
+
+      expect(await audio?.text()).toBe("kept");
+    } finally {
+      restoreGlobal("navigator", originalNavigator);
+      restoreGlobal("MediaRecorder", originalMediaRecorder);
+    }
+  });
+});
+
+function restoreGlobal(
+  name: string,
+  descriptor: PropertyDescriptor | undefined,
+): void {
+  if (descriptor === undefined) {
+    Reflect.deleteProperty(globalThis, name);
+    return;
+  }
+  Object.defineProperty(globalThis, name, descriptor);
+}

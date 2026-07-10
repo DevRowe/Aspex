@@ -8,6 +8,7 @@ import {
 } from "../lib/hubClient";
 import { useStore } from "../store";
 import { applyDirective } from "../voice/applyDirective";
+import { getVoiceSessionId, nextVoiceGeneration } from "../voice/voiceClient";
 import { useVoiceStore } from "../voice/voiceStore";
 
 export interface IntentRequestBody {
@@ -28,7 +29,11 @@ export async function postIntent(
   const hub = await getHubUrl();
   const response = await hubFetch(`${hub}/intent`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "x-aspex-voice-session": getVoiceSessionId(),
+      "x-aspex-voice-generation": nextVoiceGeneration(),
+    },
     body: JSON.stringify({ text, context } satisfies IntentRequestBody),
   });
 

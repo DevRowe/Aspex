@@ -63,11 +63,14 @@ interface EffectResult {
   directive?: ClientDirective;
 }
 
+interface ClientSession {
+  session: VoiceSession;
+  usedAt: number;
+  generation: number;
+}
+
 export class VoiceGateway {
-  private sessions = new Map<
-    string,
-    { session: VoiceSession; usedAt: number }
-  >();
+  private sessions = new Map<string, ClientSession>();
 
   constructor(private deps: GatewayDeps) {}
 
@@ -77,12 +80,19 @@ export class VoiceGateway {
     context: VoiceContext,
     intentId?: string,
     clientSessionId = "direct",
+    generation = 0,
   ): Promise<VoiceGatewayResult> {
-    const session = this.sessionFor(clientSessionId);
+    const session = this.sessionForRequest(clientSessionId, generation);
+    if (session === undefined) {
+      return this.cancelledResult();
+    }
     let transcript: Transcript;
     try {
       transcript = await this.deps.stt.transcribe(audio, mime);
     } catch {
+      if (!this.isRequestCurrent(clientSessionId, generation)) {
+        return this.cancelledResult();
+      }
       return this.withAudio({
         ok: false,
         readback: "I couldn't hear that.",
@@ -90,7 +100,13 @@ export class VoiceGateway {
       });
     }
 
-    return this.runPipeline(transcript, context, intentId, clientSessionId);
+    return this.runPipeline(
+      transcript,
+      context,
+      intentId,
+      clientSessionId,
+      generation,
+    );
   }
 
   async handleText(
@@ -98,22 +114,31 @@ export class VoiceGateway {
     context: VoiceContext,
     intentId?: string,
     clientSessionId = "direct",
+    generation = 0,
   ): Promise<VoiceGatewayResult> {
     return this.runPipeline(
       { text, confidence: 1 },
       context,
       intentId,
       clientSessionId,
+      generation,
     );
   }
 
-  async cancel(clientSessionId = "direct"): Promise<VoiceGatewayResult> {
-    this.sessions.delete(clientSessionId);
-    return this.withAudio({
-      ok: true,
-      readback: "Cancelled.",
-      session: {},
-    });
+  async cancel(
+    clientSessionId = "direct",
+    generation = 0,
+  ): Promise<VoiceGatewayResult> {
+    this.pruneSessions();
+    const current = this.sessions.get(clientSessionId);
+    if (current === undefined || generation >= current.generation) {
+      this.sessions.set(clientSessionId, {
+        session: {},
+        generation,
+        usedAt: this.now(),
+      });
+    }
+    return this.cancelledResult();
   }
 
   private async runPipeline(
@@ -121,8 +146,12 @@ export class VoiceGateway {
     context: VoiceContext,
     intentId?: string,
     clientSessionId = "direct",
+    generation = 0,
   ): Promise<VoiceGatewayResult> {
-    const session = this.sessionFor(clientSessionId);
+    const session = this.sessionForRequest(clientSessionId, generation);
+    if (session === undefined) {
+      return this.cancelledResult();
+    }
     let provenance: IntentSource = "grammar";
     const selectedActions =
       context.selectedId === undefined
@@ -167,23 +196,59 @@ export class VoiceGateway {
         this.actionFor(itemId, actionId)?.label ?? actionId,
     });
 
-    this.sessions.set(clientSessionId, {
-      session: next,
-      usedAt: this.now(),
-    });
+    if (!this.commitSession(clientSessionId, generation, next)) {
+      return this.cancelledResult();
+    }
 
     const effectResult = await this.performEffect(effect, intent, provenance);
     return this.withAudio({ ...effectResult, session: cloneSession(next) });
   }
 
-  private sessionFor(clientSessionId: string): VoiceSession {
+  private sessionForRequest(
+    clientSessionId: string,
+    generation: number,
+  ): VoiceSession | undefined {
     this.pruneSessions();
     const current = this.sessions.get(clientSessionId);
     if (current === undefined) {
+      this.sessions.set(clientSessionId, {
+        session: {},
+        generation,
+        usedAt: this.now(),
+      });
       return {};
     }
+    if (generation < current.generation) {
+      return undefined;
+    }
+    current.generation = generation;
     current.usedAt = this.now();
     return cloneSession(current.session);
+  }
+
+  private commitSession(
+    clientSessionId: string,
+    generation: number,
+    session: VoiceSession,
+  ): boolean {
+    const current = this.sessions.get(clientSessionId);
+    if (current === undefined || current.generation !== generation) {
+      return false;
+    }
+    current.session = session;
+    current.usedAt = this.now();
+    return true;
+  }
+
+  private isRequestCurrent(
+    clientSessionId: string,
+    generation: number,
+  ): boolean {
+    return this.sessions.get(clientSessionId)?.generation === generation;
+  }
+
+  private cancelledResult(): Promise<VoiceGatewayResult> {
+    return this.withAudio({ ok: true, readback: "Cancelled.", session: {} });
   }
 
   private pruneSessions(): void {

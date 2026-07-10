@@ -29,9 +29,7 @@ type Fetcher = (
 ) => Promise<Response>;
 
 export class MicrophoneCapture implements Capture {
-  private stream: MediaStream | null = null;
-  private recorder: MediaRecorder | null = null;
-  private chunks: BlobPart[] = [];
+  private activeCapture: ActiveCapture | null = null;
 
   async start(): Promise<void> {
     if (
@@ -40,34 +38,45 @@ export class MicrophoneCapture implements Capture {
     ) {
       throw new Error("Microphone capture is unavailable in this browser.");
     }
-    this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    this.chunks = [];
-    this.recorder = new MediaRecorder(this.stream);
-    this.recorder.addEventListener("dataavailable", (event) => {
-      if (event.data.size > 0) {
-        this.chunks.push(event.data);
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const recorder = new MediaRecorder(stream);
+    const capture: ActiveCapture = {
+      stream,
+      recorder,
+      chunks: [],
+      cancelled: false,
+    };
+    this.activeCapture = capture;
+    recorder.addEventListener("dataavailable", (event) => {
+      if (
+        this.activeCapture === capture &&
+        !capture.cancelled &&
+        event.data.size > 0
+      ) {
+        capture.chunks.push(event.data);
       }
     });
-    this.recorder.start();
+    recorder.start();
   }
 
   async stop(): Promise<Blob | null> {
-    const recorder = this.recorder;
-    if (recorder === null || recorder.state === "inactive") {
-      this.release();
+    const capture = this.activeCapture;
+    if (capture === null || capture.recorder.state === "inactive") {
+      this.release(capture);
       return null;
     }
+    const recorder = capture.recorder;
     return new Promise((resolve) => {
       recorder.addEventListener(
         "stop",
         () => {
           const blob =
-            this.chunks.length === 0
+            capture.cancelled || capture.chunks.length === 0
               ? null
-              : new Blob(this.chunks, {
+              : new Blob(capture.chunks, {
                   type: recorder.mimeType || "audio/webm",
                 });
-          this.release();
+          this.release(capture);
           resolve(blob);
         },
         { once: true },
@@ -77,20 +86,35 @@ export class MicrophoneCapture implements Capture {
   }
 
   cancel(): void {
-    if (this.recorder?.state === "recording") {
-      this.recorder.stop();
+    const capture = this.activeCapture;
+    if (capture === null) {
+      return;
     }
-    this.release();
+    capture.cancelled = true;
+    if (capture.recorder.state === "recording") {
+      capture.recorder.stop();
+    }
+    this.release(capture);
   }
 
-  private release(): void {
-    for (const track of this.stream?.getTracks() ?? []) {
+  private release(capture: ActiveCapture | null): void {
+    if (capture === null) {
+      return;
+    }
+    for (const track of capture.stream.getTracks()) {
       track.stop();
     }
-    this.stream = null;
-    this.recorder = null;
-    this.chunks = [];
+    if (this.activeCapture === capture) {
+      this.activeCapture = null;
+    }
   }
+}
+
+interface ActiveCapture {
+  stream: MediaStream;
+  recorder: MediaRecorder;
+  chunks: BlobPart[];
+  cancelled: boolean;
 }
 
 export class VoiceController {
@@ -103,6 +127,7 @@ export class VoiceController {
   private utteranceIntentId: string | null = null;
   private hubSessionActive = false;
   private held = false;
+  private voiceGeneration = 0;
   private readonly fetcher: Fetcher;
   private readonly clientSessionId = createIntentId("voice-session");
 
@@ -128,17 +153,19 @@ export class VoiceController {
   async press(): Promise<void> {
     if (
       this.state.phase === "recording" ||
+      this.state.phase === "permission" ||
       this.state.phase === "transcribing" ||
       this.state.phase === "uncertain"
     ) {
       return;
     }
     this.held = true;
+    const generation = ++this.voiceGeneration;
     this.utteranceIntentId = createIntentId("voice");
     this.setState("permission", "Requesting microphone…", true);
     try {
       await this.capture.start();
-      if (!this.held) {
+      if (!this.held || generation !== this.voiceGeneration) {
         this.capture.cancel();
         this.utteranceIntentId = null;
         this.setState("idle", "Hold to speak", false);
@@ -161,8 +188,13 @@ export class VoiceController {
     if (this.state.phase !== "recording") {
       return;
     }
+    const generation = this.voiceGeneration;
+    const intentId = this.utteranceIntentId;
     this.setState("transcribing", "Transcribing on the Hub…", true);
     const audio = await this.capture.stop();
+    if (generation !== this.voiceGeneration) {
+      return;
+    }
     if (audio === null || audio.size === 0) {
       this.utteranceIntentId = null;
       this.setState("error", "No audio was captured.", false);
@@ -172,8 +204,8 @@ export class VoiceController {
     const form = new FormData();
     form.append("audio", audio, "utterance.webm");
     form.append("context", JSON.stringify(this.context()));
-    if (this.utteranceIntentId !== null) {
-      form.append("intentId", this.utteranceIntentId);
+    if (intentId !== null) {
+      form.append("intentId", intentId);
     }
     try {
       const cfg = this.config();
@@ -184,6 +216,7 @@ export class VoiceController {
           headers: {
             authorization: `Bearer ${cfg.token}`,
             "x-aspex-voice-session": this.clientSessionId,
+            "x-aspex-voice-generation": String(generation),
           },
           body: form,
         },
@@ -192,6 +225,9 @@ export class VoiceController {
         throw new Error(`Voice request failed with HTTP ${response.status}.`);
       }
       const result = (await response.json()) as VoiceResult;
+      if (generation !== this.voiceGeneration) {
+        return;
+      }
       if (result.directive !== undefined) {
         this.applyDirective(result.directive);
       }
@@ -206,6 +242,9 @@ export class VoiceController {
       );
       this.utteranceIntentId = null;
     } catch (error) {
+      if (generation !== this.voiceGeneration) {
+        return;
+      }
       this.hubSessionActive = true;
       this.setState(
         "uncertain",
@@ -217,6 +256,7 @@ export class VoiceController {
 
   async cancel(): Promise<void> {
     this.held = false;
+    const generation = ++this.voiceGeneration;
     this.capture.cancel();
     const mustCancelHubSession =
       this.hubSessionActive ||
@@ -232,6 +272,7 @@ export class VoiceController {
             headers: {
               authorization: `Bearer ${cfg.token}`,
               "x-aspex-voice-session": this.clientSessionId,
+              "x-aspex-voice-generation": String(generation),
             },
           },
         );
