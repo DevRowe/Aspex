@@ -68,6 +68,8 @@ vendor code from the host-installed codex CLI, opencode CLI/server, or Cursor.
 | `tauri-build` | Tauri build script support | Apache-2.0 OR MIT |
 | `tauri-plugin-shell` | Sidecar/process launch integration | Apache-2.0 OR MIT |
 | `anyhow` | Rust error handling | Apache-2.0 OR MIT |
+| `getrandom` | Desktop shell Hub-token generation | Apache-2.0 OR MIT |
+| `serde_json` | Desktop shell Hub-token config read/write | Apache-2.0 OR MIT |
 
 Tauri pulls a larger transitive Rust graph in `Cargo.lock`; keep that lockfile
 reviewed when updating Tauri. Do not add AGPL/GPL crates to the shipped core.

@@ -10,6 +10,8 @@ export interface HookRelayOptions {
   stdin?: ReadableStream<Uint8Array>;
   fetch?: typeof fetch;
   timeoutMs?: number;
+  // Local Hub bearer token (ADR-0023); the Hub rejects unauthenticated signals.
+  token?: string;
 }
 
 export async function runHookRelay(options: HookRelayOptions): Promise<void> {
@@ -35,7 +37,12 @@ export async function runHookRelay(options: HookRelayOptions): Promise<void> {
         `http://127.0.0.1:${options.hubPort}/signals/${source}`,
         {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            ...(options.token !== undefined
+              ? { authorization: `Bearer ${options.token}` }
+              : {}),
+          },
           body: JSON.stringify(signal),
           signal: controller.signal,
         },

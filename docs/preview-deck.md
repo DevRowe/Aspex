@@ -121,6 +121,10 @@ The sandbox deliberately withholds `allow-top-navigation`, `allow-popups`, and
 tokens, GitHub tokens, database handles, or voice credentials cross into a
 Preview.
 
+The Deck client itself authenticates to the Hub with the local bearer token.
+The token is used for `/previews/*` requests and as `?token=` on the shared
+`/stream` SSE connection, but it is never added to the Preview iframe URL.
+
 ## REST and SSE Contract
 
 | Method and path | Purpose |
@@ -131,6 +135,10 @@ Preview.
 | `GET /previews/:id` | Return one Preview snapshot or `404`. |
 | `DELETE /previews/:id` | Stop a Preview; returns `204` on success. |
 | `GET /stream` | Existing Hub SSE stream; emits `preview` events. |
+
+Every route in this table requires `Authorization: Bearer <hub-token>` except
+`GET /stream`, which receives the same token as `?token=<hub-token>` because
+browser `EventSource` cannot set headers.
 
 Preview state is `booting | ready | crashed | stopped`. The expected happy path
 is streamed as `booting -> ready -> stopped`; crashes stream as `crashed` with a

@@ -28,7 +28,7 @@ apps/web/src/components/ItemDetail.tsx   # (or the card-13 actions component) ad
 4. Tests `apps/web/test/preview/itemAffordance.*`: Item with a bound trusted spec shows Preview; Item with none shows nothing; Item with only an untrusted spec shows the disabled hint; click boots + focuses (mock fetch).
 
 ## Acceptance check
-With the `engine=mock` Hub, a demo spec whose `itemId` matches a demo Item, and `bun run dev`:
+With the `engine=mock` Hub, a demo spec whose `itemId` matches a demo Item, and Vite started with `VITE_HUB_TOKEN` from `~/.aspex/config.json`:
 - The Item shows a **Preview** affordance; clicking it opens the Deck and the tile boots to `ready`.
 - An Item with no bound spec shows no affordance.
 

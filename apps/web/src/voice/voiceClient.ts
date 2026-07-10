@@ -1,5 +1,5 @@
 import type { VoiceContext, VoiceResult } from "@aspex/schema";
-import { getHubUrl } from "../lib/hubClient";
+import { getHubUrl, hubFetch } from "../lib/hubClient";
 
 let readbackAudio: HTMLAudioElement | undefined;
 let readbackObjectUrl: string | undefined;
@@ -13,7 +13,7 @@ export async function postUtterance(
   formData.append("audio", audioBlob, "utterance.webm");
   formData.append("context", JSON.stringify(context));
 
-  const response = await fetch(`${hub}/voice/utterance`, {
+  const response = await hubFetch(`${hub}/voice/utterance`, {
     method: "POST",
     body: formData,
   });
@@ -38,7 +38,7 @@ export async function playReadback(result: VoiceResult): Promise<void> {
   stopReadback();
 
   const hub = await getHubUrl();
-  const response = await fetch(resolveAudioUrl(hub, result.audioUrl));
+  const response = await hubFetch(resolveAudioUrl(hub, result.audioUrl));
 
   if (!response.ok) {
     throw new Error(

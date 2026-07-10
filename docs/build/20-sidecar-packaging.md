@@ -27,8 +27,9 @@ Add the `shell`/`process` capability so the app may spawn it (Tauri v2 capabilit
 
 ### 3. Spawn + supervise from Rust (`main.rs`)
 - On app startup: spawn the `aspex-hub` sidecar (`tauri_plugin_shell` Command::new_sidecar) with a chosen port (pass `--port` / env).
-- Poll `GET http://127.0.0.1:<port>/health` until ok (timeout + friendly error window if it never comes up).
-- Pass the port to the webview (e.g. via a tiny injected `window.__ASPEX_HUB__` or a Tauri command the JS reads) so `hubClient` connects to the right port.
+- Resolve the Hub token from `ASPEX_HUB_TOKEN` or `~/.aspex/config.json`, generate and persist one when needed, and pass it to the sidecar as `ASPEX_HUB_TOKEN`.
+- Poll `GET http://127.0.0.1:<port>/health` with `Authorization: Bearer <token>` until ok (timeout + friendly error window if it never comes up).
+- Pass the port and token to the webview via Tauri commands (`hub_url`, `hub_token`) so `hubClient` connects to the right port and authenticates.
 - On app exit / window close: **kill the sidecar** (no orphaned Hub). Handle the child exiting unexpectedly (show a "Hub stopped" state; offer restart).
 
 ### 4. Production launch path
@@ -50,3 +51,4 @@ cd apps/desktop && bunx tauri build
 - Do not leave orphaned Hub processes — supervised lifecycle is the whole point.
 - Do not introduce Node-native addons now (would break `--compile`).
 - Code signing / notarization / auto-update: later (Phase 4 polish), not here.
+- Do not commit generated files under `apps/desktop/src-tauri/binaries/`; they are build artifacts and are gitignored except for the directory README.

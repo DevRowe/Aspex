@@ -69,8 +69,9 @@ const app = buildApp({ /* …card 09 deps… */, voiceGateway });
 ```bash
 # mock voice, no GPU:
 ASPEX_VOICE_ENABLED=1 bun run apps/hub/src/cli.ts hub --mock &   # or a config with voice.mock
-curl -s 127.0.0.1:4317/voice/health      # {"ok":true,"stt":"mock",...}
-curl -s 127.0.0.1:4317/voice/config      # {"enabled":true,"pttKey":"Space"}
+TOKEN="$(bun --print 'JSON.parse(await Bun.file(process.env.HOME + "/.aspex/config.json").text()).auth.token')"
+curl -s -H "authorization: Bearer $TOKEN" 127.0.0.1:4317/voice/health      # {"ok":true,"stt":"mock",...}
+curl -s -H "authorization: Bearer $TOKEN" 127.0.0.1:4317/voice/config      # {"enabled":true,"pttKey":"Space"}
 bun run apps/hub/src/cli.ts voice check   # mock endpoints reachable -> exit 0
 bun test apps/hub/test/config.test.ts     # green
 ```
@@ -78,6 +79,7 @@ bun test apps/hub/test/config.test.ts     # green
 
 ## Out of scope / do NOT do
 - Do not enable voice by default (`enabled:false`) — it's opt-in and needs services configured.
-- Do not bind to `0.0.0.0` or add auth (card 09 boundary holds). The GPU box is reached *outbound* over the tailnet; the Hub itself stays `127.0.0.1`.
+- Historical card scope did not include auth; ADR-0023 later added the local Hub bearer token.
+- Do not bind to `0.0.0.0`. The GPU box is reached *outbound* over the tailnet; the Hub itself stays `127.0.0.1`.
 - Do not put real model code in the Hub (ADR-0013) — `voice check` only does HTTP probes.
 - Do not read the github token differently — unchanged from card 09.

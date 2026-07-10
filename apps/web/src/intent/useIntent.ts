@@ -4,6 +4,7 @@ import {
   type HubClientConfig,
   getHubConfig,
   getHubUrl,
+  hubFetch,
 } from "../lib/hubClient";
 import { useStore } from "../store";
 import { applyDirective } from "../voice/applyDirective";
@@ -25,7 +26,7 @@ export async function postIntent(
   context: VoiceContext,
 ): Promise<VoiceResult> {
   const hub = await getHubUrl();
-  const response = await fetch(`${hub}/intent`, {
+  const response = await hubFetch(`${hub}/intent`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ text, context } satisfies IntentRequestBody),

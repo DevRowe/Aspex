@@ -6,6 +6,6 @@ Phase 1 mapped speech to Actions through a **closed command grammar** (ADR-0011)
 - **Only a `no_match` whose reason is `unknown_command` falls through to the LLM.** The other no-match reasons (`low_confidence`, `no_referent`, `action_unavailable`, `ambiguous`) stay **hard rejections** — a mis-heard transcript or a missing/ambiguous referent must not be "rescued" by guessing.
 - **The LLM emits a structured `Intent`** (ADR-0019/0020) that re-enters the **same** session/confirm/no-match funnel (`reduce()` → effect) the closed grammar feeds. Free-form is a smarter parser, never a new execution surface.
 - **The pipeline (closed-grammar → fallback) is extracted** so it serves both the voice path (`audio → STT → pipeline`) and a new typed **Intent bar** on the flat cockpit (`text → pipeline`). Free-form intent is therefore usable even when voice is disabled (the default).
-- **Opt-in:** `intent.freeform.enabled` defaults `false`, the same posture as `voice.enabled` and `previews.enabled`.
+- **Opt-in:** `intent.enabled` defaults `false`, the same posture as `voice.enabled` and `previews.enabled`.
 
 We rejected **LLM-primary routing** (every utterance through the model: slower, non-deterministic on the common path, GPU always in the loop) and an **explicit "free-form mode" toggle** (extra interaction surface; the implicit fall-through is invisible until it's needed). Keeping the closed grammar first preserves the deterministic, offline-capable core and confines the LLM to the long tail.

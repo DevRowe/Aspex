@@ -32,7 +32,14 @@ export async function connect(
   options: HubStreamOptions = {},
 ): Promise<EventSource> {
   const hub = await getHubUrl();
-  const stream = new EventSource(`${hub}/stream`);
+  const token = await getHubToken();
+  const streamUrl = new URL(`${hub}/stream`);
+
+  if (token !== undefined) {
+    streamUrl.searchParams.set("token", token);
+  }
+
+  const stream = new EventSource(streamUrl.toString());
 
   stream.addEventListener("state", (event) => {
     const state = JSON.parse(
@@ -58,7 +65,7 @@ export async function runAction(
   confirmed = false,
 ): Promise<ActionResult> {
   const hub = await getHubUrl();
-  const response = await fetch(
+  const response = await hubFetch(
     `${hub}/actions/${encodeURIComponent(itemId)}/${encodeURIComponent(
       actionId,
     )}`,
@@ -80,7 +87,7 @@ export async function runAction(
 
 export async function getHubConfig(): Promise<HubClientConfig> {
   const hub = await getHubUrl();
-  const response = await fetch(`${hub}/config`);
+  const response = await hubFetch(`${hub}/config`);
 
   if (!response.ok) {
     throw new Error(`Hub config unavailable: ${response.status}`);
@@ -92,6 +99,24 @@ export async function getHubConfig(): Promise<HubClientConfig> {
 export async function getHubUrl(): Promise<string> {
   hubUrl ??= resolveHubUrl();
   return hubUrl;
+}
+
+export async function getHubToken(): Promise<string | undefined> {
+  return resolveHubToken();
+}
+
+export async function hubFetch(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+): Promise<Response> {
+  const token = await getHubToken();
+  const headers = new Headers(init.headers);
+
+  if (token !== undefined) {
+    headers.set("authorization", `Bearer ${token}`);
+  }
+
+  return fetch(input, { ...init, headers });
 }
 
 async function resolveHubUrl(): Promise<string> {
@@ -111,4 +136,25 @@ async function resolveHubUrl(): Promise<string> {
   }
 
   return DEFAULT_HUB_URL;
+}
+
+async function resolveHubToken(): Promise<string | undefined> {
+  const invoke =
+    typeof window === "undefined"
+      ? undefined
+      : (window as TauriGlobals).__TAURI__?.core?.invoke;
+
+  if (typeof invoke === "function") {
+    const token = await invoke<string | null>("hub_token");
+    const trimmed = token?.trim();
+    return trimmed === undefined || trimmed === "" ? undefined : trimmed;
+  }
+
+  const configured = import.meta.env.VITE_HUB_TOKEN;
+
+  if (typeof configured === "string" && configured.trim() !== "") {
+    return configured.trim();
+  }
+
+  return undefined;
 }

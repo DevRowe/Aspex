@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   DEFAULT_CONFIG,
   expandHome,
   loadConfig,
+  persistHubToken,
   resolvedLivenessConfig,
 } from "../src/config";
 
@@ -647,4 +648,145 @@ describe("hub config", () => {
     expect(expandHome("~")).not.toBe("~");
     expect(expandHome("~/aspex.json")).not.toContain("~");
   });
+
+  test("reads the auth token from the config file", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "aspex-config-auth-"));
+    const configPath = join(dir, "config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({ auth: { token: "file-tok" } }),
+    );
+
+    try {
+      const cfg = await loadConfig({ configPath, env: {} });
+      expect(cfg.auth).toEqual({ token: "file-tok" });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("ASPEX_HUB_TOKEN overrides the config file token", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "aspex-config-auth-env-"));
+    const configPath = join(dir, "config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({ auth: { token: "file-tok" } }),
+    );
+
+    try {
+      const cfg = await loadConfig({
+        configPath,
+        env: { ASPEX_HUB_TOKEN: "env-tok" },
+      });
+      expect(cfg.auth).toEqual({ token: "env-tok" });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects an empty ASPEX_HUB_TOKEN", async () => {
+    await expect(loadConfig({ env: { ASPEX_HUB_TOKEN: "" } })).rejects.toThrow(
+      "ASPEX_HUB_TOKEN must be a non-empty string",
+    );
+  });
+
+  test("rejects an empty auth.token in the config file", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "aspex-config-auth-empty-"));
+    const configPath = join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify({ auth: { token: "" } }));
+
+    try {
+      await expect(loadConfig({ configPath, env: {} })).rejects.toThrow(
+        "auth.token must be a non-empty string when auth is configured",
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("persistHubToken writes the token and preserves other keys", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "aspex-config-persist-"));
+    const configPath = join(dir, "nested", "config.json");
+
+    try {
+      await persistHubToken(configPath, "generated-tok");
+      const first = await loadConfig({ configPath, env: {} });
+      expect(first.auth).toEqual({ token: "generated-tok" });
+
+      await writeFile(
+        configPath,
+        JSON.stringify({ hubPort: 5555, auth: { token: "old" } }),
+      );
+      await persistHubToken(configPath, "rotated-tok");
+      const second = await loadConfig({ configPath, env: {} });
+      expect(second.hubPort).toBe(5555);
+      expect(second.auth).toEqual({ token: "rotated-tok" });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("persistHubToken restricts default config file and directory permissions", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "aspex-config-auth-mode-"));
+    const configDir = join(dir, ".aspex");
+    const configPath = join(configDir, "config.json");
+
+    try {
+      await persistHubToken(configPath, "generated-tok", {
+        defaultConfigPath: configPath,
+      });
+
+      expect(permissionBits((await stat(configDir)).mode)).toBe(0o700);
+      expect(permissionBits((await stat(configPath)).mode)).toBe(0o600);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("persistHubToken replaces an existing permissive default config securely", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "aspex-config-auth-replace-"));
+    const configDir = join(dir, ".aspex");
+    const configPath = join(configDir, "config.json");
+
+    try {
+      await mkdir(configDir, { recursive: true });
+      await writeFile(configPath, JSON.stringify({ hubPort: 5555 }));
+      await chmod(configDir, 0o755);
+      await chmod(configPath, 0o666);
+
+      await persistHubToken(configPath, "generated-tok", {
+        defaultConfigPath: configPath,
+      });
+
+      const cfg = await loadConfig({ configPath, env: {} });
+      expect(cfg.hubPort).toBe(5555);
+      expect(cfg.auth).toEqual({ token: "generated-tok" });
+      expect(permissionBits((await stat(configDir)).mode)).toBe(0o700);
+      expect(permissionBits((await stat(configPath)).mode)).toBe(0o600);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("persistHubToken does not chmod explicit config directories", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "aspex-config-explicit-mode-"));
+    const configDir = join(dir, "shared");
+    const configPath = join(configDir, "config.json");
+
+    try {
+      await writeFile(join(dir, ".keep"), "");
+      await mkdir(configDir, { recursive: true });
+      await chmod(configDir, 0o755);
+      await persistHubToken(configPath, "generated-tok");
+
+      expect(permissionBits((await stat(configDir)).mode)).toBe(0o755);
+      expect(permissionBits((await stat(configPath)).mode)).toBe(0o600);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
+
+function permissionBits(mode: number): number {
+  return mode & 0o777;
+}

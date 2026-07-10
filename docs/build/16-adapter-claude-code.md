@@ -36,11 +36,11 @@ Each runs `aspex hook-relay --event <Name>`:
 ## `aspex hook-relay --event <Name>`
 ```ts
 // 1. read all of stdin (Claude Code passes hook JSON: session_id, transcript_path, cwd, hook_event_name, tool_name?, message?)
-// 2. read hub port from config (same loader as the Hub).
+// 2. read hub port and auth token from config (same loader as the Hub).
 // 3. build a Signal: id = claude-code:session:<session_id>, source "claude-code",
 //    state/reason per the event (PostToolUse -> a heartbeat marker), project = basename(cwd),
 //    deepLink = a terminal-focus URL or the cwd path.
-// 4. POST to http://127.0.0.1:<port>/signals/claude-code, short timeout, exit fast (Claude Code waits on hooks!).
+// 4. POST to http://127.0.0.1:<port>/signals/claude-code with Authorization: Bearer <token>, short timeout, exit fast (Claude Code waits on hooks!).
 // 5. NEVER block or error the hook — on failure, exit 0 quietly (don't break the user's Claude Code).
 ```
 

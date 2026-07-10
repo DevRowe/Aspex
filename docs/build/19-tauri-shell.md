@@ -33,7 +33,7 @@ apps/desktop/package.json                # scripts: "dev": "tauri dev", "build":
 ## Acceptance check
 ```bash
 # terminal 1: bun run apps/hub/src/cli.ts hub --mock
-# terminal 2: cd apps/web && bun run dev
+# terminal 2: VITE_HUB_TOKEN="$(bun --print 'JSON.parse(await Bun.file(process.env.HOME + "/.aspex/config.json").text()).auth.token')" bun run --cwd apps/web dev
 # terminal 3: cd apps/desktop && bunx tauri dev
 # -> a native Aspex window opens showing the inbox with live mock data.
 ```

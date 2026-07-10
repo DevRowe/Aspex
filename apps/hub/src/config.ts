@@ -1,7 +1,15 @@
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { PreviewSpec, Severity } from "@aspex/schema";
 import type { LivenessConfig } from "./engine/liveness";
 
@@ -10,6 +18,7 @@ export interface AspexConfig {
   dbPath: string;
   needsMeCap: number;
   pollIntervalMs: number;
+  auth?: { token: string };
   github?: { token: string; allowlist?: string[] };
   ntfy?: { server?: string; topic: string; minSeverity?: "medium" | "high" };
   liveness?: Partial<LivenessConfig>;
@@ -60,6 +69,7 @@ export interface AdaptersConfig {
 type ConfigFile = Partial<
   Omit<
     AspexConfig,
+    | "auth"
     | "github"
     | "ntfy"
     | "liveness"
@@ -69,6 +79,7 @@ type ConfigFile = Partial<
     | "adapters"
   >
 > & {
+  auth?: Partial<AspexConfig["auth"]>;
   github?: Partial<AspexConfig["github"]>;
   ntfy?: Partial<AspexConfig["ntfy"]>;
   liveness?: Partial<LivenessConfig>;
@@ -184,6 +195,63 @@ export function resolvedLivenessConfig(cfg: AspexConfig): LivenessConfig {
   } as LivenessConfig;
 }
 
+// The concrete filesystem path loadConfig reads, so a caller can persist a
+// generated token back into the same file.
+export function resolveConfigPath(configPath?: string): string {
+  return expandHome(configPath ?? DEFAULT_CONFIG_PATH);
+}
+
+// Merge a generated auth token into the config file, preserving any other keys.
+export async function persistHubToken(
+  path: string,
+  token: string,
+  {
+    defaultConfigPath = DEFAULT_CONFIG_PATH,
+  }: { defaultConfigPath?: string } = {},
+): Promise<void> {
+  const existing = await readConfigFile(path, false);
+  const next = {
+    ...existing,
+    auth: { ...(existing.auth ?? {}), token },
+  };
+
+  const directory = dirname(path);
+  const ownsDirectory =
+    resolve(path) === resolve(expandHome(defaultConfigPath));
+  await mkdir(directory, {
+    recursive: true,
+    ...(ownsDirectory ? { mode: 0o700 } : {}),
+  });
+  if (ownsDirectory) {
+    await chmod(directory, 0o700);
+  }
+  await writeSecureConfigFile(path, `${JSON.stringify(next, null, 2)}\n`);
+  await chmod(path, 0o600);
+}
+
+async function writeSecureConfigFile(
+  path: string,
+  content: string,
+): Promise<void> {
+  const tempPath = join(
+    dirname(path),
+    `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`,
+  );
+
+  try {
+    await writeFile(tempPath, content, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+    await chmod(tempPath, 0o600);
+    await rename(tempPath, path);
+  } catch (error) {
+    await rm(tempPath, { force: true });
+    throw error;
+  }
+}
+
 async function readConfigFile(
   path: string,
   required: boolean,
@@ -210,6 +278,7 @@ function mergeConfig(base: AspexConfig, override: ConfigFile): AspexConfig {
   return {
     ...base,
     ...override,
+    auth: mergeOptionalObject(base.auth, override.auth),
     github: mergeOptionalObject(base.github, override.github),
     ntfy: mergeOptionalObject(base.ntfy, override.ntfy),
     liveness: mergeOptionalObject(base.liveness, override.liveness),
@@ -221,6 +290,7 @@ function mergeConfig(base: AspexConfig, override: ConfigFile): AspexConfig {
 }
 
 function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
+  const hubToken = optionalNonEmptyEnv(env.ASPEX_HUB_TOKEN, "ASPEX_HUB_TOKEN");
   const githubToken = optionalNonEmptyEnv(
     env.ASPEX_GITHUB_TOKEN,
     "ASPEX_GITHUB_TOKEN",
@@ -486,8 +556,11 @@ function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
       }
     : cfg.adapters;
 
+  const auth = hubToken !== undefined ? { token: hubToken } : cfg.auth;
+
   return {
     ...cfg,
+    auth,
     hubPort: parseInteger(env.ASPEX_HUB_PORT, cfg.hubPort, "ASPEX_HUB_PORT"),
     dbPath:
       optionalNonEmptyEnv(env.ASPEX_DB_PATH, "ASPEX_DB_PATH") ?? cfg.dbPath,
@@ -548,6 +621,10 @@ function normalizeConfig(cfg: AspexConfig): AspexConfig {
     previews: normalizePreviewConfig(cfg.previews),
     adapters: normalizeAdaptersConfig(cfg.adapters),
   };
+
+  if (normalized.auth !== undefined) {
+    requireNonEmptySectionField(normalized.auth.token, "auth.token", "auth");
+  }
 
   if (normalized.github !== undefined) {
     requireNonEmptySectionField(

@@ -20,6 +20,11 @@ bun add hono
 
 ## Endpoints
 
+Current implementation note: ADR-0023 now wraps every route in this table with
+the local bearer-token middleware when `authToken` is configured.
+Use `Authorization: Bearer <hub-token>` for REST calls and `?token=<hub-token>`
+for `/stream`.
+
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/health` | `200 {ok:true, version}` |
@@ -62,4 +67,5 @@ Tests must prove:
 ## Out of scope / do NOT do
 - No WebSocket / Socket.IO / NATS (ADR-0005). SSE + REST only.
 - Do not put adapter logic here — actions go through the injected `dispatchAction`.
-- Do not auth/login (Phase 0 is local-only). Bind to `127.0.0.1` only (card 09), not `0.0.0.0`.
+- Historical Phase 0 scope did not include auth/login; ADR-0023 later added a local bearer token before tailnet reachability.
+- Bind to `127.0.0.1` only (card 09), not `0.0.0.0`.

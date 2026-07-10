@@ -72,7 +72,7 @@ Tests must prove:
 - `runAction(merge)` calls Octokit's merge method; `runAction(approve)` calls the review method.
 - A search returning many repos issues **one set of search calls**, not per-repo calls (ADR-0006).
 
-Optional live smoke (manual, with a real token): `aspex hub` (no mock) → `/state` shows your real review-requested PRs.
+Optional live smoke (manual, with a real GitHub token and the Hub bearer token): `aspex hub` (no mock) → authenticated `/state` shows your real review-requested PRs.
 
 ## Out of scope / do NOT do
 - Do NOT enumerate repositories (ADR-0006). Viewer-centric search only.

@@ -3,9 +3,11 @@ import type { Preview, PreviewSpec } from "@aspex/schema";
 import { PreviewsDisabledError, boot, listSpecs, stop } from "./previewClient";
 
 const originalFetch = globalThis.fetch;
+const originalWindow = (globalThis as { window?: unknown }).window;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  (globalThis as { window?: unknown }).window = originalWindow;
 });
 
 describe("previewClient", () => {
@@ -72,4 +74,28 @@ describe("previewClient", () => {
     ]);
     expect(await requests[0]?.json()).toEqual({ specId: "web" });
   });
+
+  test("sends the Tauri Hub token on preview requests", async () => {
+    let request: Request | undefined;
+    (globalThis as { window?: unknown }).window = tauriWindow("preview-token");
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      request = new Request(input, init);
+      return Promise.resolve(Response.json([]));
+    }) as typeof fetch;
+
+    await listSpecs();
+
+    expect(request?.headers.get("authorization")).toBe("Bearer preview-token");
+  });
 });
+
+function tauriWindow(token: string): unknown {
+  return {
+    __TAURI__: {
+      core: {
+        invoke: async (command: string) =>
+          command === "hub_token" ? token : "http://127.0.0.1:4317",
+      },
+    },
+  };
+}

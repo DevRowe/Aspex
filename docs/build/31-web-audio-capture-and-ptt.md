@@ -31,7 +31,7 @@ export async function postUtterance(audio: Blob, ctx: VoiceContext): Promise<Voi
   const fd = new FormData();
   fd.append("audio", audio, "utterance.webm");
   fd.append("context", JSON.stringify(ctx));
-  const r = await fetch(`${HUB}/voice/utterance`, { method: "POST", body: fd });
+  const r = await hubFetch(`${HUB}/voice/utterance`, { method: "POST", body: fd });
   return r.json();
 }
 ```
@@ -44,8 +44,8 @@ export async function postUtterance(audio: Blob, ctx: VoiceContext): Promise<Voi
 5. The `VoiceResult` is forwarded to the card-32 layer (store action) — here just prove the round-trip.
 
 ## Acceptance check
-With `hub --mock` (mock STT scripted to "what needs me") + `bun run dev`:
-- Press-and-hold the button (or hold `Space`) → mic permission once → release → a `POST /voice/utterance` fires with a non-empty `audio` part and a `context` containing the current `selectedId` + `needsMeIds`.
+With `hub --mock` (mock STT scripted to "what needs me") and Vite started with `VITE_HUB_TOKEN` from `~/.aspex/config.json`:
+- Press-and-hold the button (or hold `Space`) → mic permission once → release → an authenticated `POST /voice/utterance` fires with a non-empty `audio` part and a `context` containing the current `selectedId` + `needsMeIds`.
 - The returned `VoiceResult.readback` is received; if `audioUrl` present, audio plays.
 - Holding `Space` **inside** a focused text input does **not** start capture.
 - A second press while a read-back is playing stops the playback.

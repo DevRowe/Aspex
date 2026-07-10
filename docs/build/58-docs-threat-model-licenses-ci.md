@@ -38,10 +38,11 @@ README.md                      # EDIT: free-form intent quick-start + the new ad
 ```bash
 # free-form intent, no GPU:
 ASPEX_INTENT_ENABLED=1 ASPEX_INTENT_MOCK=1 bun run apps/hub/src/cli.ts hub --mock &
+TOKEN="$(bun --print 'JSON.parse(await Bun.file(process.env.HOME + "/.aspex/config.json").text()).auth.token')"
 # (mock intent service scripted: "approve the atlas review" -> {action,approve}; then "confirm approve")
-curl -s -X POST 127.0.0.1:4317/intent -H 'content-type: application/json' \
+curl -s -X POST 127.0.0.1:4317/intent -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
   -d '{"text":"approve the atlas review","context":{"selectedId":null,"needsMeIds":["github:pr:o/atlas#42"]}}'   # armed (elevated)
-curl -s -X POST 127.0.0.1:4317/intent -H 'content-type: application/json' \
+curl -s -X POST 127.0.0.1:4317/intent -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
   -d '{"text":"confirm approve","context":{"needsMeIds":["github:pr:o/atlas#42"]}}'                              # dispatched once
 # adapters: replay codex/opencode/cursor fixtures -> Items with agent-local reasons (no PR-lifecycle)
 bun install && bun run typecheck && bun test && bun run lint   # all green

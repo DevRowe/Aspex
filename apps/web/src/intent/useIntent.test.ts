@@ -10,9 +10,11 @@ import {
 } from "./useIntent";
 
 const originalFetch = globalThis.fetch;
+const originalWindow = (globalThis as { window?: unknown }).window;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  (globalThis as { window?: unknown }).window = originalWindow;
   useStore.setState({
     needsMe: [],
     overflow: [],
@@ -66,6 +68,25 @@ describe("intent client", () => {
         needsMeIds: ["github:pr:1", "codex:session:2"],
       },
     });
+  });
+
+  test("sends the Tauri Hub token on intent requests", async () => {
+    let request: Request | undefined;
+    const result: VoiceResult = {
+      ok: true,
+      readback: "Showing what needs you.",
+      session: {},
+    };
+
+    (globalThis as { window?: unknown }).window = tauriWindow("intent-token");
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      request = new Request(input, init);
+      return Promise.resolve(Response.json(result));
+    }) as typeof fetch;
+
+    await postIntent("what needs me", buildIntentContext());
+
+    expect(request?.headers.get("authorization")).toBe("Bearer intent-token");
   });
 
   test("applies readback session and directive through the existing voice flow", () => {
@@ -165,5 +186,16 @@ function item(id: string): AttentionItem {
     actions: [],
     observedAt: "2026-06-28T00:00:00.000Z",
     staleAfter: "2026-06-28T00:05:00.000Z",
+  };
+}
+
+function tauriWindow(token: string): unknown {
+  return {
+    __TAURI__: {
+      core: {
+        invoke: async (command: string) =>
+          command === "hub_token" ? token : "http://127.0.0.1:4317",
+      },
+    },
   };
 }

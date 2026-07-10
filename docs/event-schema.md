@@ -302,6 +302,18 @@ not match. `context` carries the selected Item and visible needs-me ids.
 `action`, `dictate`, or `no_match` with reason `unknown_command`. The result may
 not contain `confirm`, `dictation_body`, `post`, or `cancel`.
 
+## Hub HTTP Auth
+
+All Hub HTTP and SSE endpoints require the local bearer token from
+`~/.aspex/config.json` under `auth.token`, or the value supplied through
+`ASPEX_HUB_TOKEN`.
+Most requests send `Authorization: Bearer <token>`.
+The SSE stream sends the same token as `?token=<token>` because browser
+`EventSource` cannot set request headers.
+`POST /webhooks/cursor` is the only bearer-token exemption because it verifies
+its own HMAC signature.
+See [ADR-0023](adr/0023-hub-api-requires-a-local-bearer-token.md).
+
 ## `/intent`
 
 `POST /intent` accepts JSON:

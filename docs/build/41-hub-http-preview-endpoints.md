@@ -16,6 +16,10 @@ apps/hub/src/http/server.ts           # mount the router + SSE source when previ
 ```
 
 ## HTTP surface + status mapping
+Current implementation note: these REST routes require
+`Authorization: Bearer <hub-token>`, and their `preview` events ride the shared
+`/stream?token=<hub-token>` SSE connection per ADR-0023.
+
 | Method + path | Behaviour | Codes |
 |---|---|---|
 | `GET /previews/specs` | `registry.list()` (trust + itemId) | 200 |

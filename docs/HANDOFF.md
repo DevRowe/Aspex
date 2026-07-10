@@ -1,6 +1,10 @@
 # Aspex — Session Handoff
 
-*Resume point for the next agent. Last updated 2026-06-28.*
+*Resume point for the next agent. Last updated 2026-07-10.*
+
+This handoff is archival Phase 0 context.
+The current project framing and sharp edges live in [README.md](../README.md),
+[CONTEXT.md](../CONTEXT.md), and [AGENTS.md](../AGENTS.md).
 
 ## recap — what just happened
 
@@ -57,4 +61,4 @@ Two candidates, user has not yet chosen:
 - **Never print GitHub token bytes** — the auto-mode classifier blocks it. Pass the token to the Hub via `ASPEX_GITHUB_TOKEN="$(gh auth token)"` inline (env only, never echoed). `gh` is authed as **DevRowe** (`repo` scope).
 - **github adapter's first poll blocks `hub.start()`/`/health`** — readiness waits on the first live API call. Fine for a fast token.
 - **Token/secret hygiene:** Hub config and DB default to `~/.aspex/` (outside the repo), so the token isn't committed. Keep it there; don't drop an `aspex.config.json` at the repo root (the committed `.gitignore` is minimal).
-- To run the Hub for a quick check: `bun run apps/hub/src/cli.ts hub --mock` then `curl 127.0.0.1:4317/state`. `--mock` needs no token/agents.
+- To run the Hub for a quick check: `bun run apps/hub/src/cli.ts hub --mock`, then read `auth.token` from `~/.aspex/config.json` and call `curl -H "authorization: Bearer $TOKEN" 127.0.0.1:4317/state`. `--mock` needs no agents, but the Hub still generates and requires its local API token.

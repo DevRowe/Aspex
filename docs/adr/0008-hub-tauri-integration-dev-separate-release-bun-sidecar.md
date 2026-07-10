@@ -1,5 +1,12 @@
-# Hub↔Tauri: separate processes in dev, Bun-compiled sidecar at release
+# Hub-Tauri: separate processes in dev, Bun-compiled sidecar at release
 
-The Hub is Node/TS but a Tauri app is a Rust binary + webview, so the two must be physically reconciled. We build and test against a **separately-run Hub** on `localhost` (the Tauri webview just calls `http://localhost:PORT`), and bundle the Hub as a **Bun-compiled standalone binary** (`bun build --compile`) wired as a Tauri **sidecar** that the app spawns and supervises — added as one isolated late-Phase-0 chunk. This adopts Bun as the Hub runtime/compiler for the binary.
+The Hub is Node/TS but a Tauri app is a Rust binary + webview, so the two must be physically reconciled.
+We build and test against a **separately-run Hub** on `localhost` (the Tauri webview just calls `http://localhost:PORT`), and bundle the Hub as a **Bun-compiled standalone binary** (`bun build --compile`) wired as a Tauri **sidecar** that the app spawns and supervises - added as one isolated late-Phase-0 chunk.
+This adopts Bun as the Hub runtime/compiler for the binary.
 
-We chose the split so every earlier chunk is verifiable without confronting the Tauri-sidecar packaging footgun, and the sidecar becomes a single self-contained task at the end. We rejected wiring the sidecar from the start (puts the bundling problem on the critical path before the core works) and rejected shipping two permanently-separate processes (simplest, but not a one-click desktop app and contradicts the first-class-desktop decision in ADR-0007). Consequence: the dev launch command and the packaged-app launch path differ, and the plan must cover both; the Hub code must stay Bun-compile-compatible (avoid Node-native addons that don't compile cleanly).
+We chose the split so every earlier chunk is verifiable without confronting the Tauri-sidecar packaging footgun, and the sidecar becomes a single self-contained task at the end.
+We rejected wiring the sidecar from the start (puts the bundling problem on the critical path before the core works) and rejected shipping two permanently-separate processes (simplest, but not a one-click desktop app and contradicts the first-class-desktop decision in ADR-0007).
+Consequence: the dev launch command and the packaged-app launch path differ, and the plan must cover both; the Hub code must stay Bun-compile-compatible (avoid Node-native addons that don't compile cleanly).
+
+Current ADR-0023 consequence: the packaged shell resolves the Hub bearer token before spawning the sidecar, passes it as `ASPEX_HUB_TOKEN`, polls `/health` with `Authorization: Bearer`, and exposes the token to the retained web client through the Tauri `hub_token` command.
+The compiled sidecar binaries are release build artifacts under `apps/desktop/src-tauri/binaries/`; they are regenerated with `bun build --compile`, gitignored except for the directory README, and are not committed.

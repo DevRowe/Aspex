@@ -23,13 +23,14 @@ export interface AspexConfig {
   dbPath: string;            // default "~/.aspex/aspex.sqlite"
   needsMeCap: number;        // default 7
   pollIntervalMs: number;    // default 60_000 (github search rate limit: 30/min)
+  auth?: { token: string };   // generated on first boot or ASPEX_HUB_TOKEN (ADR-0023)
   github?: { token: string; allowlist?: string[] };   // allowlist = extra "owner/repo" or "author:name"
   ntfy?: { server?: string; topic: string; minSeverity?: "medium" | "high" };
   liveness?: Partial<import("./engine/liveness").LivenessConfig>;
   mock?: boolean;            // demo mode (card 10)
 }
 ```
-- Load order: built-in defaults → config file (`--config <path>`, else `~/.aspex/config.json` if present) → env overrides (`ASPEX_HUB_PORT`, `ASPEX_GITHUB_TOKEN`, …).
+- Load order: built-in defaults → config file (`--config <path>`, else `~/.aspex/config.json` if present) → env overrides (`ASPEX_HUB_PORT`, `ASPEX_HUB_TOKEN`, `ASPEX_GITHUB_TOKEN`, …).
 - Missing optional sections are fine; the Hub runs adapter-less.
 
 ## CLI commands (this card)
@@ -69,15 +70,18 @@ export function buildHub(cfg: AspexConfig) {
 ## Acceptance check
 ```bash
 bun run apps/hub/src/cli.ts hub &     # starts
-curl -s http://127.0.0.1:4317/health  # -> {"ok":true,...}
+TOKEN="$(bun --print 'JSON.parse(await Bun.file(process.env.HOME + "/.aspex/config.json").text()).auth.token')"
+curl -s -H "authorization: Bearer $TOKEN" http://127.0.0.1:4317/health  # -> {"ok":true,...}
 curl -s -X POST http://127.0.0.1:4317/signals/webhook \
+  -H "authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
   -d '{"id":"webhook:test","source":"webhook","state":"needs_review","summary":"hi","attentionRequired":true}'
-curl -s http://127.0.0.1:4317/state   # includes webhook:test in needsMe
+curl -s -H "authorization: Bearer $TOKEN" http://127.0.0.1:4317/state   # includes webhook:test in needsMe
 ```
 Plus `bun test apps/hub/test/config.test.ts` green (defaults + env override + file merge).
 
 ## Out of scope / do NOT do
 - Do not implement real adapters or `hooks`/`hook-relay` logic (cards 10, 15–18).
-- Do not bind to `0.0.0.0` or add auth — local-only, `127.0.0.1` (security boundary).
+- Historical Phase 0 scope did not include auth; ADR-0023 later added a local bearer token while the Hub still binds `127.0.0.1`.
+- Do not bind to `0.0.0.0`.
 - Do not read secrets from the repo; the github token comes from config/env only.

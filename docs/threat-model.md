@@ -33,15 +33,38 @@ not a summarization or command-execution path.
 
 ## Local-Only Boundary
 
-The Hub binds `127.0.0.1` and is intended for same-machine access only. There is
-no automatic public ingress.
+The Hub binds `127.0.0.1` and is same-machine only today.
+The browser CORS origin policy is localhost/Tauri-only.
+Under the north-star realignment it is intended to become reachable from glasses over a private tailnet, so "on the box" will no longer imply "is the user."
+There is still no automatic public ingress, and the bind-address/CORS change is part of the protocol implementation follow-up.
 
-The desktop shell and web client talk to the local Hub over REST and SSE. The
-Hub stores state locally in SQLite. A GitHub token, when configured, stays local
-in config or environment variables and is used only by the GitHub adapter.
+The desktop shell and web client talk to the local Hub over REST and SSE.
+The Hub stores state locally in SQLite.
+A GitHub token, when configured, stays local in config or environment variables and is used only by the GitHub adapter.
 
 The webhook adapter is also local ingest. It accepts data for the local Hub; it
 does not make generic webhook actions writable in Phase 0.
+
+## Hub API Auth
+
+Because the Hub is intended to become reachable over a tailnet rather than pure loopback, every HTTP and SSE endpoint already requires a locally generated bearer token (ADR-0023).
+The token was added before the bind-address and CORS origin-policy change so any future tailnet peer cannot read the world-model, dispatch actions, or inject Signals without it.
+
+The token is generated on first boot and stored in `~/.aspex/config.json`, or supplied through `ASPEX_HUB_TOKEN`, which takes precedence and is never written to disk.
+It is a same-machine credential today and a future same-tailnet credential, not a public authentication system: one token, no accounts or sessions.
+When `ASPEX_HUB_TOKEN` is supplied, the operator must provide that environment
+variable to every local caller that should reach the Hub, such as Claude Code
+hook relay processes, because env tokens are intentionally not persisted.
+
+Clients send `Authorization: Bearer <token>`. The SSE stream also accepts the
+token as a `?token=` query parameter because the browser `EventSource` API cannot
+set headers; the tradeoff is that a query-string token can leak into logs, which
+is accepted for a local stream today and a future private-tailnet stream.
+The token is compared in constant time over fixed-length digests, and a missing or wrong token returns `401`.
+
+CORS origin policy remains local/Tauri-only: the token check runs after the CORS middleware, so preflight `OPTIONS` still succeeds.
+The `POST /webhooks/cursor` route is the one bearer exemption, because it is reached by Cursor's cloud and authenticates with its own HMAC signature instead (ADR-0022).
+The bundled `aspex hook-relay` and `aspex preview list` present the token so same-box ingestion still works.
 
 ## Trusted and Untrusted Inputs
 

@@ -1,5 +1,5 @@
 import type { Preview, PreviewSpec } from "@aspex/schema";
-import { getHubUrl } from "../lib/hubClient";
+import { getHubUrl, hubFetch } from "../lib/hubClient";
 
 export class PreviewsDisabledError extends Error {
   constructor() {
@@ -39,7 +39,7 @@ async function request<T>(
   options: { disabledOnNotFound?: boolean } = {},
 ): Promise<T> {
   const hub = await getHubUrl();
-  const response = await fetch(`${hub}${path}`, init);
+  const response = await hubFetch(`${hub}${path}`, init);
 
   if (response.status === 404 && options.disabledOnNotFound === true) {
     throw new PreviewsDisabledError();
