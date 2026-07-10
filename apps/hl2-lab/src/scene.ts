@@ -3,6 +3,7 @@ import * as THREE from "three";
 import type { ArmedAction } from "./confirmation";
 import type { ConnectionState } from "./domain";
 import type { FocusController } from "./input";
+import type { PendingOpen } from "./openDirective";
 import type { VoiceState } from "./voice";
 
 export interface SceneView {
@@ -13,6 +14,7 @@ export interface SceneView {
   connection: ConnectionState;
   voice: VoiceState;
   armed: ArmedAction<unknown> | null;
+  pendingOpen: PendingOpen | null;
   retryAvailable: boolean;
   notice: string;
 }
@@ -173,36 +175,41 @@ export class LabScene {
 
     const shipArmed = isShipArmed(view.armed);
     const actions =
-      view.armed !== null
+      view.pendingOpen !== null
         ? [
-            {
-              id: shipArmed ? "confirm:merge-word" : "confirm:yes",
-              label: shipArmed ? "ENTER MERGE WORD" : "CONFIRM",
-              color: 0xb8d54a,
-            },
-            { id: "confirm:cancel", label: "CANCEL", color: 0x3d4642 },
+            { id: "control:open", label: "OPEN", color: 0xb8d54a },
+            { id: "control:cancel-open", label: "CANCEL", color: 0x3d4642 },
           ]
-        : view.voice.phase === "armed"
+        : view.armed !== null
           ? [
               {
-                id: "control:voice-cancel",
-                label: "CANCEL VOICE ARM",
-                color: 0x3d4642,
+                id: shipArmed ? "confirm:merge-word" : "confirm:yes",
+                label: shipArmed ? "ENTER MERGE WORD" : "CONFIRM",
+                color: 0xb8d54a,
               },
+              { id: "confirm:cancel", label: "CANCEL", color: 0x3d4642 },
             ]
-          : (view.item?.actions.slice(0, 4).map((action) => ({
-              id: `action:${action.id}`,
-              label:
-                action.id === "ship"
-                  ? "REVIEW + SHIP"
-                  : action.label.toUpperCase(),
-              color:
-                action.risk === "dangerous"
-                  ? 0xb85a43
-                  : action.risk === "medium"
-                    ? 0x8a753b
-                    : 0x344d3b,
-            })) ?? []);
+          : view.voice.phase === "armed"
+            ? [
+                {
+                  id: "control:voice-cancel",
+                  label: "CANCEL VOICE ARM",
+                  color: 0x3d4642,
+                },
+              ]
+            : (view.item?.actions.slice(0, 4).map((action) => ({
+                id: `action:${action.id}`,
+                label:
+                  action.id === "ship"
+                    ? "REVIEW + SHIP"
+                    : action.label.toUpperCase(),
+                color:
+                  action.risk === "dangerous"
+                    ? 0xb85a43
+                    : action.risk === "medium"
+                      ? 0x8a753b
+                      : 0x344d3b,
+              })) ?? []);
 
     const actionWidth = Math.min(
       0.28,
@@ -312,13 +319,16 @@ export class LabScene {
     });
 
     const footer =
-      view.armed !== null
-        ? isShipArmed(view.armed)
-          ? `ARMED: ${view.armed.label} · enter MERGE or SHIP`
-          : `ARMED: ${view.armed.label} · explicit second confirm required`
-        : view.notice || view.voice.message;
+      view.pendingOpen !== null
+        ? `READY TO OPEN: ${view.pendingOpen.label} · tap OPEN`
+        : view.armed !== null
+          ? isShipArmed(view.armed)
+            ? `ARMED: ${view.armed.label} · enter MERGE or SHIP`
+            : `ARMED: ${view.armed.label} · explicit second confirm required`
+          : view.notice || view.voice.message;
     context.font = "600 27px system-ui, sans-serif";
-    context.fillStyle = view.armed !== null ? "#f3df7f" : "#8fa096";
+    context.fillStyle =
+      view.pendingOpen !== null || view.armed !== null ? "#f3df7f" : "#8fa096";
     context.fillText(fitText(context, footer, 1080), 50, 570);
 
     const texture = new THREE.CanvasTexture(canvas);

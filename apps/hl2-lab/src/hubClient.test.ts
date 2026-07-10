@@ -130,6 +130,71 @@ describe("HubClient", () => {
     expect(streams).toHaveLength(2);
     expect(states).toHaveLength(2);
   });
+
+  test("ignores a stale pairing hydration and its later stream callbacks", async () => {
+    const responses: Array<(response: Response) => void> = [];
+    const streams: FakeEventSource[] = [];
+    const states: string[] = [];
+    const phases: string[] = [];
+    const client = new HubClient(
+      () => ({ hubUrl: "https://hub.test", token: "token" }),
+      {
+        onState: (state) => states.push(state.generatedAt),
+        onConnection: (state) => phases.push(state.phase),
+        onMalformed: () => undefined,
+      },
+      {
+        fetcher: (() =>
+          new Promise<Response>((resolve) =>
+            responses.push(resolve),
+          )) as unknown as typeof fetch,
+        eventSource: () => {
+          const stream = new FakeEventSource();
+          streams.push(stream);
+          return stream;
+        },
+      },
+    );
+
+    client.start();
+    client.start();
+    expect(responses).toHaveLength(2);
+
+    responses[0]?.(
+      Response.json(ranked({ generatedAt: "2026-07-10T00:00:01.000Z" })),
+    );
+    await tick();
+    expect(states).toEqual([]);
+    expect(streams).toEqual([]);
+
+    responses[1]?.(
+      Response.json(ranked({ generatedAt: "2026-07-10T00:00:02.000Z" })),
+    );
+    await tick();
+    expect(states).toEqual(["2026-07-10T00:00:02.000Z"]);
+    const staleStream = streams[0];
+    expect(staleStream).toBeDefined();
+
+    client.start();
+    responses[2]?.(
+      Response.json(ranked({ generatedAt: "2026-07-10T00:00:03.000Z" })),
+    );
+    await tick();
+    expect(states).toEqual([
+      "2026-07-10T00:00:02.000Z",
+      "2026-07-10T00:00:03.000Z",
+    ]);
+
+    staleStream?.state(ranked({ generatedAt: "2026-07-10T00:00:04.000Z" }));
+    staleStream?.onopen?.(new Event("open"));
+    staleStream?.onerror?.(new Event("error"));
+
+    expect(states).toEqual([
+      "2026-07-10T00:00:02.000Z",
+      "2026-07-10T00:00:03.000Z",
+    ]);
+    expect(phases.at(-1)).toBe("connecting");
+  });
 });
 
 function tick(): Promise<void> {

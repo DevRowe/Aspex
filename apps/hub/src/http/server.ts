@@ -95,7 +95,12 @@ export function buildApp(deps: ServerDeps): Hono {
         (deps.corsOrigin !== undefined && origin === deps.corsOrigin)
           ? origin
           : undefined,
-      allowHeaders: ["Authorization", "Content-Type", "X-Aspex-Voice-Session"],
+      allowHeaders: [
+        "Authorization",
+        "Content-Type",
+        "X-Aspex-Voice-Session",
+        "X-Aspex-Voice-Generation",
+      ],
     }),
   );
 

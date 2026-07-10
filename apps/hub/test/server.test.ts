@@ -44,6 +44,31 @@ function openServer(
 }
 
 describe("hub HTTP server", () => {
+  test("allows the voice session and generation headers in localhost CORS preflight", async () => {
+    const { app, db } = openServer();
+
+    const response = await app.fetch(
+      new Request("http://hub.test/voice/utterance", {
+        method: "OPTIONS",
+        headers: {
+          origin: "http://localhost:5173",
+          "access-control-request-method": "POST",
+          "access-control-request-headers":
+            "authorization, content-type, x-aspex-voice-session, x-aspex-voice-generation",
+        },
+      }),
+    );
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("access-control-allow-origin")).toBe(
+      "http://localhost:5173",
+    );
+    expect(response.headers.get("access-control-allow-headers")).toContain(
+      "X-Aspex-Voice-Generation",
+    );
+    db.close();
+  });
+
   test("GET /health returns ok and version", async () => {
     const { app, db } = openServer();
 

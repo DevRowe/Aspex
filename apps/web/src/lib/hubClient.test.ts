@@ -52,6 +52,23 @@ describe("hubClient auth", () => {
     expect(request?.headers.get("content-type")).toBe("application/json");
   });
 
+  test("sends an explicit merge word with a confirmed ship action", async () => {
+    let request: Request | undefined;
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      request = new Request(input, init);
+      return Promise.resolve(Response.json({ ok: true, message: "done" }));
+    }) as typeof fetch;
+
+    await runAction("orchestrator:giles:task", "ship", true, {
+      mergeWord: "merge",
+    });
+
+    expect(await request?.json()).toEqual({
+      confirmed: true,
+      payload: { mergeWord: "merge" },
+    });
+  });
+
   test("prefers the Tauri Hub token over a configured Vite token", async () => {
     let request: Request | undefined;
     process.env.VITE_HUB_TOKEN = "vite-token";

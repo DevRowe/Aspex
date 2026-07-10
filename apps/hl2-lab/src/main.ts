@@ -6,6 +6,7 @@ import type { ConnectionState } from "./domain";
 import { HubClient } from "./hubClient";
 import { FocusController } from "./input";
 import type { LogicalAction, LogicalDispatch } from "./intentIds";
+import { type PendingOpen, openStagedItem, stageOpen } from "./openDirective";
 import { LabScene } from "./scene";
 import { PairingSettings } from "./settings";
 import { VoiceController, type VoiceState } from "./voice";
@@ -90,6 +91,7 @@ let notice = "";
 let arActive = false;
 let retryDelivery: { pending: PendingOperation; confirmed: boolean } | null =
   null;
+let pendingOpen: PendingOpen | null = null;
 
 const voice = new VoiceController(
   () => requiredConfig(),
@@ -341,6 +343,15 @@ async function activate(targetId: string): Promise<void> {
     await voice.cancel();
     return;
   }
+  if (targetId === "control:open") {
+    openPendingItem();
+    return;
+  }
+  if (targetId === "control:cancel-open") {
+    pendingOpen = null;
+    showNotice("Open cancelled.");
+    return;
+  }
   if (targetId === "confirm:cancel") {
     confirmation.cancel();
     showNotice("Cancelled. Nothing was delivered.");
@@ -496,16 +507,33 @@ function applyDirective(directive: ClientDirective): void {
       }
       break;
     case "open": {
-      const item = world
-        .orderedItems()
-        .find((candidate) => candidate.id === directive.id);
-      if (item?.deepLink !== undefined) {
-        window.open(item.deepLink, "_blank", "noopener,noreferrer");
+      const staged = stageOpen(world.orderedItems(), directive.id);
+      if (staged === null) {
+        showNotice("That item has no link to open.");
+      } else {
+        pendingOpen = staged;
+        world.select(directive.id);
+        showNotice(`Ready to open ${staged.label}. Tap OPEN to continue.`);
       }
       break;
     }
     case "none":
       break;
+  }
+}
+
+function openPendingItem(): void {
+  if (pendingOpen === null) {
+    showNotice("Nothing is staged to open.");
+    return;
+  }
+  const opened = openStagedItem(pendingOpen, window.open.bind(window));
+  if (opened) {
+    const { label } = pendingOpen;
+    pendingOpen = null;
+    showNotice(`Opened ${label}.`);
+  } else {
+    showNotice("The browser blocked the window. Tap OPEN to try again.");
   }
 }
 
@@ -572,6 +600,7 @@ function render(): void {
     connection,
     voice: voiceState,
     armed: confirmation.current(),
+    pendingOpen,
     retryAvailable: retryDelivery !== null,
     notice,
   });

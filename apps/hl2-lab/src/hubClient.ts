@@ -134,8 +134,14 @@ export class HubClient {
 
     try {
       const state = parseRankedState(await response.json());
+      if (!this.isCurrent(generation)) {
+        return;
+      }
       this.acceptState(state);
     } catch (error) {
+      if (!this.isCurrent(generation)) {
+        return;
+      }
       const message =
         error instanceof Error ? error.message : "Malformed Hub snapshot";
       this.events.onMalformed(message);
@@ -144,15 +150,28 @@ export class HubClient {
       return;
     }
 
+    if (!this.isCurrent(generation)) {
+      return;
+    }
     const streamUrl = new URL(`${trimUrl(cfg.hubUrl)}/stream`);
     streamUrl.searchParams.set("token", cfg.token);
     const stream = this.eventSource(streamUrl.toString());
+    if (!this.isCurrent(generation)) {
+      stream.close();
+      return;
+    }
     this.stream = stream;
     stream.addEventListener("state", ((event: MessageEvent<string>) => {
+      if (!this.isCurrentStream(generation, stream)) {
+        return;
+      }
       try {
         this.acceptState(parseRankedState(JSON.parse(event.data) as unknown));
         this.emit("live", "Authenticated stream connected.");
       } catch (error) {
+        if (!this.isCurrentStream(generation, stream)) {
+          return;
+        }
         const message =
           error instanceof Error ? error.message : "Malformed Hub stream event";
         this.events.onMalformed(message);
@@ -160,16 +179,33 @@ export class HubClient {
       }
     }) as EventListener);
     stream.onopen = () => {
+      if (!this.isCurrentStream(generation, stream)) {
+        return;
+      }
       this.attempt = 0;
       this.emit("live", "Authenticated stream connected.");
     };
     stream.onerror = () => {
+      if (!this.isCurrentStream(generation, stream)) {
+        return;
+      }
       stream.close();
       if (this.stream === stream) {
         this.stream = null;
       }
       this.scheduleReconnect(generation, "Hub stream interrupted.");
     };
+  }
+
+  private isCurrent(generation: number): boolean {
+    return !this.stopped && generation === this.generation;
+  }
+
+  private isCurrentStream(
+    generation: number,
+    stream: EventSourceLike,
+  ): boolean {
+    return this.isCurrent(generation) && this.stream === stream;
   }
 
   private acceptState(state: RankedState): void {
