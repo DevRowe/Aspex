@@ -167,6 +167,35 @@ describe("parse", () => {
     });
   });
 
+  test("requires merge or ship to confirm a pending ship action", () => {
+    const session: VoiceSession = {
+      pendingConfirm: {
+        itemId: selectedId,
+        actionId: "ship",
+        label: "Review & ship",
+        armedAt: "2026-06-28T00:00:00.000Z",
+      },
+    };
+
+    expect(parseText("merge", { session })).toEqual({
+      kind: "confirm",
+      itemId: selectedId,
+      actionId: "ship",
+      mergeWord: "merge",
+    });
+    expect(parseText("confirm ship", { session })).toEqual({
+      kind: "confirm",
+      itemId: selectedId,
+      actionId: "ship",
+      mergeWord: "ship",
+    });
+    expect(parseText("confirm approve", { session })).toEqual({
+      kind: "no_match",
+      heard: "confirm approve",
+      reason: "unknown_command",
+    });
+  });
+
   test("parses every orchestrator item verb against live action metadata", () => {
     expect(parseText("deny")).toEqual({
       kind: "dictate",

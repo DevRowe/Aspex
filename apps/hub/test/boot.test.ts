@@ -198,7 +198,10 @@ describe("hub boot", () => {
       const intent = await hub.app.fetch(
         new Request("http://hub.test/intent", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            "x-aspex-voice-session": "boot-intent-test-1",
+          },
           body: JSON.stringify({
             text: "what needs me",
             context: { needsMeIds: [] },

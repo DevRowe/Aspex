@@ -101,6 +101,46 @@ describe("VoiceGateway", () => {
     expect(dispatchAction).not.toHaveBeenCalled();
   });
 
+  test("keeps voice sessions isolated when cancelling one client", async () => {
+    const { gateway, dispatchAction } = makeGateway([
+      "merge",
+      "merge",
+      "confirm merge",
+    ]);
+    const context = { selectedId: itemId, needsMeIds: [itemId] };
+
+    await gateway.handle(audio, "audio/webm", context, undefined, "client-a");
+    await gateway.handle(audio, "audio/webm", context, undefined, "client-b");
+    await gateway.cancel("client-a");
+    const confirmed = await gateway.handle(
+      audio,
+      "audio/webm",
+      context,
+      undefined,
+      "client-b",
+    );
+
+    expect(confirmed.ok).toBe(true);
+    expect(dispatchAction).toHaveBeenCalledWith(itemId, "merge", {
+      confirmed: true,
+    });
+  });
+
+  test("ship requires a spoken merge word and forwards it with confirmation", async () => {
+    const { gateway, dispatchAction } = makeGateway(["ship", "merge"]);
+    const context = { selectedId: itemId, needsMeIds: [itemId] };
+
+    const armed = await gateway.handle(audio, "audio/webm", context);
+    const confirmed = await gateway.handle(audio, "audio/webm", context);
+
+    expect(armed.session.pendingConfirm?.actionId).toBe("ship");
+    expect(dispatchAction).toHaveBeenCalledWith(itemId, "ship", {
+      mergeWord: "merge",
+      confirmed: true,
+    });
+    expect(confirmed.session).toEqual({});
+  });
+
   test("comment prompts dictation, reads body back, then posts it", async () => {
     const { gateway, dispatchAction } = makeGateway([
       "comment",

@@ -57,6 +57,18 @@ app.insertAdjacentHTML(
         <button class="compact-button primary" type="submit">Continue</button>
       </div>
     </form>
+  </dialog>
+  <dialog id="merge-dialog" aria-labelledby="merge-title">
+    <form id="merge-form" method="dialog">
+      <h1 id="merge-title">Confirm review &amp; ship</h1>
+      <p>Enter <strong>merge</strong> or <strong>ship</strong> to queue this direction.</p>
+      <label>Merge word<input id="merge-word" name="merge-word" required autocomplete="off" autocapitalize="off" spellcheck="false" /></label>
+      <div id="merge-error" class="error-text" role="alert"></div>
+      <div class="dialog-actions">
+        <button class="compact-button" type="button" data-close-merge>Cancel</button>
+        <button class="compact-button primary" type="submit">Confirm ship</button>
+      </div>
+    </form>
   </dialog>`,
 );
 
@@ -133,6 +145,10 @@ const projectInput = requiredElement<HTMLInputElement>("project-input");
 const directionText = requiredElement<HTMLTextAreaElement>("direction-text");
 const textError = requiredElement<HTMLElement>("text-error");
 let textSubmit: ((text: string, project?: string) => void) | null = null;
+const mergeDialog = requiredElement<HTMLDialogElement>("merge-dialog");
+const mergeForm = requiredElement<HTMLFormElement>("merge-form");
+const mergeWordInput = requiredElement<HTMLInputElement>("merge-word");
+const mergeError = requiredElement<HTMLElement>("merge-error");
 
 settingsButton.addEventListener("click", () => void openSettings());
 dispatchButton.addEventListener("click", () => openDispatch());
@@ -196,6 +212,36 @@ textForm.addEventListener("submit", (event) => {
   textSubmit?.(text, projectInput.value.trim() || undefined);
   textSubmit = null;
   textDialog.close();
+});
+for (const button of document.querySelectorAll<HTMLButtonElement>(
+  "[data-close-merge]",
+)) {
+  button.addEventListener("click", () => mergeDialog.close());
+}
+mergeForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const mergeWord = mergeWordInput.value.trim().toLowerCase();
+  if (mergeWord !== "merge" && mergeWord !== "ship") {
+    mergeError.textContent = "Enter merge or ship to confirm.";
+    return;
+  }
+  const pending = confirmation.takeConfirmed();
+  if (pending?.kind !== "action" || pending.operation.actionId !== "ship") {
+    mergeDialog.close();
+    showNotice("Ship confirmation expired.");
+    return;
+  }
+  mergeDialog.close();
+  void deliver(
+    {
+      kind: "action",
+      operation: {
+        ...pending.operation,
+        payload: { ...pending.operation.payload, mergeWord },
+      },
+    },
+    true,
+  );
 });
 
 voice.subscribe((state) => {
@@ -307,6 +353,10 @@ async function activate(targetId: string): Promise<void> {
     }
     return;
   }
+  if (targetId === "confirm:merge-word") {
+    openMergeConfirmation();
+    return;
+  }
   if (targetId.startsWith("action:")) {
     const item = world.selected();
     const actionId = targetId.slice("action:".length);
@@ -337,7 +387,7 @@ async function attemptAction(
   retryDelivery = null;
   if (action.id === "ship") {
     confirmation.arm({ kind: "action", operation }, action.label);
-    showNotice("Review & ship armed. Pinch CONFIRM to give the merge word.");
+    showNotice("Review & ship armed. Enter merge or ship to confirm.");
     return;
   }
   const result = await direction.action(operation, false);
@@ -382,6 +432,21 @@ function openActionText(
     false,
     (text) => callback(text),
   );
+}
+
+function openMergeConfirmation(): void {
+  const armed = confirmation.current();
+  if (
+    armed?.operation.kind !== "action" ||
+    armed.operation.operation.actionId !== "ship"
+  ) {
+    showNotice("Ship confirmation expired.");
+    return;
+  }
+  mergeWordInput.value = "";
+  mergeError.textContent = "";
+  mergeDialog.showModal();
+  mergeWordInput.focus();
 }
 
 function openTextDialog(

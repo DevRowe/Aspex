@@ -3,6 +3,7 @@ import { getHubUrl, hubFetch } from "../lib/hubClient";
 
 let readbackAudio: HTMLAudioElement | undefined;
 let readbackObjectUrl: string | undefined;
+const voiceSessionId = `web-${crypto.randomUUID()}`;
 
 export async function postUtterance(
   audioBlob: Blob,
@@ -15,6 +16,7 @@ export async function postUtterance(
 
   const response = await hubFetch(`${hub}/voice/utterance`, {
     method: "POST",
+    headers: { "x-aspex-voice-session": voiceSessionId },
     body: formData,
   });
 

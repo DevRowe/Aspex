@@ -171,10 +171,15 @@ export class LabScene {
     card.position.set(0, 0.08, PANEL_Z);
     this.root.add(card);
 
+    const shipArmed = isShipArmed(view.armed);
     const actions =
       view.armed !== null
         ? [
-            { id: "confirm:yes", label: "CONFIRM", color: 0xb8d54a },
+            {
+              id: shipArmed ? "confirm:merge-word" : "confirm:yes",
+              label: shipArmed ? "ENTER MERGE WORD" : "CONFIRM",
+              color: 0xb8d54a,
+            },
             { id: "confirm:cancel", label: "CANCEL", color: 0x3d4642 },
           ]
         : view.voice.phase === "armed"
@@ -308,7 +313,9 @@ export class LabScene {
 
     const footer =
       view.armed !== null
-        ? `ARMED: ${view.armed.label} · explicit second confirm required`
+        ? isShipArmed(view.armed)
+          ? `ARMED: ${view.armed.label} · enter MERGE or SHIP`
+          : `ARMED: ${view.armed.label} · explicit second confirm required`
         : view.notice || view.voice.message;
     context.font = "600 27px system-ui, sans-serif";
     context.fillStyle = view.armed !== null ? "#f3df7f" : "#8fa096";
@@ -522,6 +529,21 @@ function connectionHeadline(connection: ConnectionState): string {
     default:
       return "Waiting for the real Hub world-model.";
   }
+}
+
+function isShipArmed(
+  armed: ArmedAction<unknown> | null,
+): armed is ArmedAction<{ kind: "action"; operation: { actionId: string } }> {
+  if (armed === null || typeof armed.operation !== "object") {
+    return false;
+  }
+  const operation = armed.operation as {
+    kind?: unknown;
+    operation?: { actionId?: unknown };
+  };
+  return (
+    operation.kind === "action" && operation.operation?.actionId === "ship"
+  );
 }
 
 function disposeObject(object: THREE.Object3D): void {

@@ -1,3 +1,4 @@
+import { isMergeWord } from "@aspex/schema";
 import {
   type LogicalAction,
   type LogicalDispatch,
@@ -65,6 +66,18 @@ export class DirectionClient {
     operation: LogicalAction,
     confirmed = false,
   ): Promise<DirectionResult> {
+    if (
+      operation.actionId === "ship" &&
+      confirmed &&
+      !isMergeWord(operation.payload?.mergeWord)
+    ) {
+      return {
+        kind: "failed",
+        message: "Enter merge or ship to confirm review & ship.",
+        status: 400,
+        retryable: false,
+      };
+    }
     const cfg = this.config();
     return this.send(
       `${trimUrl(cfg.hubUrl)}/actions/${encodeURIComponent(operation.itemId)}/${encodeURIComponent(operation.actionId)}`,

@@ -2,6 +2,7 @@ import type {
   Action,
   Intent,
   ItemId,
+  MergeWord,
   Transcript,
   VoiceContext,
   VoiceSession,
@@ -78,19 +79,31 @@ export function parse(input: ParseInput): Intent {
     };
   }
 
-  const confirmMatch = /^confirm (.+)$/.exec(normalized);
-  const confirmVerb = confirmMatch?.[1];
-  if (
-    confirmVerb !== undefined &&
-    input.session.pendingConfirm !== undefined &&
-    actionIdForConfirmVerb(confirmVerb) ===
-      input.session.pendingConfirm.actionId
-  ) {
-    return {
-      kind: "confirm",
-      itemId: input.session.pendingConfirm.itemId,
-      actionId: input.session.pendingConfirm.actionId,
-    };
+  const pendingConfirm = input.session.pendingConfirm;
+  if (pendingConfirm !== undefined) {
+    const mergeWord = mergeWordForConfirmation(normalized);
+    if (pendingConfirm.actionId === "ship" && mergeWord !== undefined) {
+      return {
+        kind: "confirm",
+        itemId: pendingConfirm.itemId,
+        actionId: pendingConfirm.actionId,
+        mergeWord,
+      };
+    }
+
+    const confirmMatch = /^confirm (.+)$/.exec(normalized);
+    const confirmVerb = confirmMatch?.[1];
+    if (
+      confirmVerb !== undefined &&
+      pendingConfirm.actionId !== "ship" &&
+      actionIdForConfirmVerb(confirmVerb) === pendingConfirm.actionId
+    ) {
+      return {
+        kind: "confirm",
+        itemId: pendingConfirm.itemId,
+        actionId: pendingConfirm.actionId,
+      };
+    }
   }
 
   if (normalized === "what needs me" || normalized === "show what needs me") {
@@ -202,6 +215,16 @@ function normalize(text: string): string {
 
 function actionIdForConfirmVerb(verb: string): string | undefined {
   return ACTION_BY_PHRASE.get(verb)?.actionId;
+}
+
+function mergeWordForConfirmation(text: string): MergeWord | undefined {
+  if (text === "merge" || text === "confirm merge") {
+    return "merge";
+  }
+  if (text === "ship" || text === "confirm ship") {
+    return "ship";
+  }
+  return undefined;
 }
 
 function noMatch(

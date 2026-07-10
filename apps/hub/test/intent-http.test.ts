@@ -298,7 +298,10 @@ function fakeGateway(
 function jsonRequest(path: string, body: unknown): Request {
   return new Request(`http://hub.test${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "x-aspex-voice-session": "intent-http-test-1",
+    },
     body: JSON.stringify(body),
   });
 }

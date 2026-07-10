@@ -64,7 +64,10 @@ interface EffectResult {
 }
 
 export class VoiceGateway {
-  private session: VoiceSession = {};
+  private sessions = new Map<
+    string,
+    { session: VoiceSession; usedAt: number }
+  >();
 
   constructor(private deps: GatewayDeps) {}
 
@@ -73,7 +76,9 @@ export class VoiceGateway {
     mime: string,
     context: VoiceContext,
     intentId?: string,
+    clientSessionId = "direct",
   ): Promise<VoiceGatewayResult> {
+    const session = this.sessionFor(clientSessionId);
     let transcript: Transcript;
     try {
       transcript = await this.deps.stt.transcribe(audio, mime);
@@ -81,27 +86,33 @@ export class VoiceGateway {
       return this.withAudio({
         ok: false,
         readback: "I couldn't hear that.",
-        session: this.session,
+        session,
       });
     }
 
-    return this.runPipeline(transcript, context, intentId);
+    return this.runPipeline(transcript, context, intentId, clientSessionId);
   }
 
   async handleText(
     text: string,
     context: VoiceContext,
     intentId?: string,
+    clientSessionId = "direct",
   ): Promise<VoiceGatewayResult> {
-    return this.runPipeline({ text, confidence: 1 }, context, intentId);
+    return this.runPipeline(
+      { text, confidence: 1 },
+      context,
+      intentId,
+      clientSessionId,
+    );
   }
 
-  async cancel(): Promise<VoiceGatewayResult> {
-    this.session = {};
+  async cancel(clientSessionId = "direct"): Promise<VoiceGatewayResult> {
+    this.sessions.delete(clientSessionId);
     return this.withAudio({
       ok: true,
       readback: "Cancelled.",
-      session: this.session,
+      session: {},
     });
   }
 
@@ -109,7 +120,9 @@ export class VoiceGateway {
     transcript: Transcript,
     context: VoiceContext,
     intentId?: string,
+    clientSessionId = "direct",
   ): Promise<VoiceGatewayResult> {
+    const session = this.sessionFor(clientSessionId);
     let provenance: IntentSource = "grammar";
     const selectedActions =
       context.selectedId === undefined
@@ -119,7 +132,7 @@ export class VoiceGateway {
     let intent = parse({
       transcript,
       context,
-      session: this.session,
+      session,
       selectedActions,
       resolveProject: this.deps.resolveProject,
       confidenceThreshold: this.deps.confidenceThreshold,
@@ -143,8 +156,8 @@ export class VoiceGateway {
       provenance = "freeform";
     }
 
-    const { next, effect } = reduce(this.session, intent, {
-      now: this.deps.now?.() ?? Date.now(),
+    const { next, effect } = reduce(session, intent, {
+      now: this.now(),
       confirmTtlMs: this.deps.confirmTtlMs,
       requiresConfirmation: (itemId, actionId) =>
         this.actionFor(itemId, actionId)?.requiresConfirmation === true ||
@@ -154,10 +167,36 @@ export class VoiceGateway {
         this.actionFor(itemId, actionId)?.label ?? actionId,
     });
 
-    this.session = next;
+    this.sessions.set(clientSessionId, {
+      session: next,
+      usedAt: this.now(),
+    });
 
     const effectResult = await this.performEffect(effect, intent, provenance);
-    return this.withAudio({ ...effectResult, session: this.session });
+    return this.withAudio({ ...effectResult, session: cloneSession(next) });
+  }
+
+  private sessionFor(clientSessionId: string): VoiceSession {
+    this.pruneSessions();
+    const current = this.sessions.get(clientSessionId);
+    if (current === undefined) {
+      return {};
+    }
+    current.usedAt = this.now();
+    return cloneSession(current.session);
+  }
+
+  private pruneSessions(): void {
+    const expiry = this.now() - Math.max(this.deps.confirmTtlMs, 300_000);
+    for (const [clientSessionId, entry] of this.sessions) {
+      if (entry.usedAt < expiry) {
+        this.sessions.delete(clientSessionId);
+      }
+    }
+  }
+
+  private now(): number {
+    return this.deps.now?.() ?? Date.now();
   }
 
   private async performEffect(
@@ -203,7 +242,10 @@ export class VoiceGateway {
       case "armed":
         result = {
           ok: true,
-          readback: `Say 'confirm ${effect.actionId}' to ${effect.label} ${effect.itemId}.`,
+          readback:
+            effect.actionId === "ship"
+              ? `Say 'merge' or 'ship' to ${effect.label} ${effect.itemId}.`
+              : `Say 'confirm ${effect.actionId}' to ${effect.label} ${effect.itemId}.`,
         };
         break;
 
@@ -432,4 +474,18 @@ function directiveInterpretation(directive: ClientDirective): string {
     case "none":
       return "do nothing";
   }
+}
+
+function cloneSession(session: VoiceSession): VoiceSession {
+  return {
+    ...(session.pendingConfirm !== undefined
+      ? { pendingConfirm: { ...session.pendingConfirm } }
+      : {}),
+    ...(session.pendingDispatch !== undefined
+      ? { pendingDispatch: { ...session.pendingDispatch } }
+      : {}),
+    ...(session.dictating !== undefined
+      ? { dictating: { ...session.dictating } }
+      : {}),
+  };
 }

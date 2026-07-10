@@ -73,10 +73,17 @@ describe("the three HL2 lab exit moments with a non-writing Hub double", () => {
     expect(bodies).toHaveLength(0);
     const confirmed = gate.takeConfirmed();
     if (confirmed?.kind === "action") {
-      await client.action(confirmed.operation, true);
+      await client.action(
+        {
+          ...confirmed.operation,
+          payload: { ...confirmed.operation.payload, mergeWord: "merge" },
+        },
+        true,
+      );
     }
     expect(bodies).toHaveLength(1);
     expect(bodies[0]?.confirmed).toBe(true);
+    expect(bodies[0]?.payload).toEqual({ mergeWord: "merge" });
   });
 });
 

@@ -17,7 +17,12 @@ export type Intent =
   | { kind: "read"; target: ItemId }
   | { kind: "open"; target: ItemId }
   | { kind: "action"; itemId: ItemId; actionId: string; intentId?: string }
-  | { kind: "confirm"; itemId: ItemId; actionId: string }
+  | {
+      kind: "confirm";
+      itemId: ItemId;
+      actionId: string;
+      mergeWord?: MergeWord;
+    }
   | { kind: "dictate"; itemId: ItemId; actionId: string; intentId?: string }
   | {
       kind: "dispatch_task";
@@ -38,6 +43,14 @@ export type NoMatchReason =
   | "no_referent"
   | "action_unavailable"
   | "ambiguous";
+
+export const MERGE_WORDS = ["merge", "ship"] as const;
+
+export type MergeWord = (typeof MERGE_WORDS)[number];
+
+export function isMergeWord(value: unknown): value is MergeWord {
+  return typeof value === "string" && MERGE_WORDS.includes(value as MergeWord);
+}
 
 export type ClientDirective =
   | { type: "select"; id: ItemId }

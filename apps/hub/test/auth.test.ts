@@ -163,7 +163,7 @@ describe("hub API auth", () => {
       "http://localhost:5173",
     );
     expect(response.headers.get("access-control-allow-headers")).toBe(
-      "Authorization,Content-Type",
+      "Authorization,Content-Type,X-Aspex-Voice-Session",
     );
     db.close();
   });

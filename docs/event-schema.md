@@ -414,6 +414,12 @@ into the payload so the owning orchestrator reuses it as the inbox filename
 
 `POST /voice/utterance` accepts `multipart/form-data`:
 
+All stateful voice requests (`/voice/utterance`, `/intent`, and `/voice/cancel`)
+also require an `X-Aspex-Voice-Session` header containing a client-generated,
+filename-safe session identifier.
+The Hub keeps confirmation, dispatch, and dictation state isolated to that
+identifier.
+
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `audio` | yes | File-like browser audio blob, usually `audio/webm` or `audio/wav`. |

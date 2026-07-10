@@ -1,7 +1,9 @@
+import { isMergeWord } from "@aspex/schema";
 import type {
   ClientDirective,
   Intent,
   ItemId,
+  MergeWord,
   NoMatchReason,
   VoiceSession,
 } from "@aspex/schema";
@@ -91,19 +93,17 @@ export function reduce(
       if (
         pending !== undefined &&
         pending.itemId === intent.itemId &&
-        pending.actionId === intent.actionId
+        pending.actionId === intent.actionId &&
+        (pending.actionId !== "ship" || isMergeWord(intent.mergeWord))
       ) {
+        const payload = confirmationPayload(pending, intent.mergeWord);
         return {
           next: withoutPendingConfirm(current),
           effect: {
             kind: "dispatch",
             itemId: intent.itemId,
             actionId: intent.actionId,
-            ...(pending.payload !== undefined
-              ? { payload: pending.payload }
-              : pending.intentId !== undefined
-                ? { payload: { intentId: pending.intentId } }
-                : {}),
+            ...(payload !== undefined ? { payload } : {}),
           },
         };
       }
@@ -361,6 +361,27 @@ function dictationPayload(
     ...(intentId !== undefined ? { intentId } : {}),
   };
 }
+
+function confirmationPayload(
+  pending: NonNullable<VoiceSession["pendingConfirm"]>,
+  mergeWord: MergeWord | undefined,
+): Record<string, unknown> | undefined {
+  const payload: Record<string, unknown> =
+    pending.payload !== undefined && isRecord(pending.payload)
+      ? { ...pending.payload }
+      : pending.intentId !== undefined
+        ? { intentId: pending.intentId }
+        : {};
+
+  if (mergeWord !== undefined) {
+    payload.mergeWord = mergeWord;
+  }
+
+  return Object.keys(payload).length === 0 ? undefined : payload;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 function fallbackIntentId(now: number): string {
   return `voice-${now.toString(36)}`;

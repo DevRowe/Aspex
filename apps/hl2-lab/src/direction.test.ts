@@ -66,4 +66,44 @@ describe("DirectionClient", () => {
     expect(result.kind).toBe("confirmation_required");
     expect(calls).toBe(1);
   });
+
+  test("does not send a confirmed ship action without a merge word", async () => {
+    let calls = 0;
+    const client = new DirectionClient(
+      () => ({ hubUrl: "https://hub.test", token: "token" }),
+      (() => {
+        calls += 1;
+        return Promise.resolve(Response.json({ ok: true }));
+      }) as unknown as typeof fetch,
+    );
+
+    const result = await client.action(
+      client.beginAction("orchestrator:giles:task", "ship"),
+      true,
+    );
+
+    expect(result).toMatchObject({ kind: "failed", retryable: false });
+    expect(calls).toBe(0);
+  });
+
+  test("sends the merge word alongside a confirmed ship action", async () => {
+    const requests: Request[] = [];
+    const client = new DirectionClient(
+      () => ({ hubUrl: "https://hub.test", token: "token" }),
+      ((input, init) => {
+        requests.push(new Request(input, init));
+        return Promise.resolve(Response.json({ ok: true, message: "queued" }));
+      }) as typeof fetch,
+    );
+    const operation = client.beginAction("orchestrator:giles:task", "ship", {
+      mergeWord: "merge",
+    });
+
+    await client.action(operation, true);
+
+    expect(await requests[0]?.json()).toMatchObject({
+      confirmed: true,
+      payload: { mergeWord: "merge" },
+    });
+  });
 });

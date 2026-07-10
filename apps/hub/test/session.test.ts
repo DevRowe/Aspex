@@ -67,6 +67,43 @@ describe("reduce", () => {
     expect(result.effect).not.toHaveProperty("confirmed");
   });
 
+  test("ship only dispatches after a merge word is captured", () => {
+    const shipSession: VoiceSession = {
+      pendingConfirm: {
+        itemId,
+        actionId: "ship",
+        label: "Review & ship",
+        armedAt: new Date(now).toISOString(),
+      },
+    };
+
+    expect(
+      reduce(
+        shipSession,
+        { kind: "confirm", itemId, actionId: "ship" },
+        meta({ requiresConfirmation: () => true }),
+      ),
+    ).toEqual({
+      next: {},
+      effect: { kind: "noMatch", reason: "unknown_command" },
+    });
+    expect(
+      reduce(
+        shipSession,
+        { kind: "confirm", itemId, actionId: "ship", mergeWord: "merge" },
+        meta({ requiresConfirmation: () => true }),
+      ),
+    ).toEqual({
+      next: {},
+      effect: {
+        kind: "dispatch",
+        itemId,
+        actionId: "ship",
+        payload: { mergeWord: "merge" },
+      },
+    });
+  });
+
   test("mismatched confirm noMatches and clears pendingConfirm", () => {
     expect(
       reduce(

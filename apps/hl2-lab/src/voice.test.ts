@@ -65,6 +65,9 @@ describe("VoiceController", () => {
     ]);
     expect(request?.url).toBe("https://hub.test/voice/utterance");
     expect(request?.headers.get("authorization")).toBe("Bearer token");
+    expect(request?.headers.get("x-aspex-voice-session")).toMatch(
+      /^hl2-.*-voice-session-/,
+    );
   });
 
   test("reports microphone denial explicitly", async () => {
@@ -148,5 +151,73 @@ describe("VoiceController", () => {
       "https://hub.test/voice/utterance",
       "https://hub.test/voice/cancel",
     ]);
+  });
+
+  test("cancels a dictation session on the Hub", async () => {
+    const urls: string[] = [];
+    const controller = new VoiceController(
+      () => ({ hubUrl: "https://hub.test", token: "token" }),
+      () => ({ needsMeIds: [] }),
+      () => undefined,
+      new FakeCapture(),
+      ((input) => {
+        urls.push(String(input));
+        return Promise.resolve(
+          urls.length === 1
+            ? Response.json({
+                ok: true,
+                readback: "Dictate your comment.",
+                session: {
+                  dictating: { itemId: "item", actionId: "comment" },
+                },
+              })
+            : Response.json({ ok: true, readback: "Cancelled.", session: {} }),
+        );
+      }) as typeof fetch,
+    );
+
+    await controller.press();
+    await controller.release();
+    expect(controller.snapshot()).toMatchObject({
+      phase: "armed",
+      canCancel: true,
+    });
+    await controller.cancel();
+    expect(urls).toEqual([
+      "https://hub.test/voice/utterance",
+      "https://hub.test/voice/cancel",
+    ]);
+  });
+
+  test("blocks another utterance after an uncertain delivery until cancellation resolves", async () => {
+    const capture = new FakeCapture();
+    let calls = 0;
+    const controller = new VoiceController(
+      () => ({ hubUrl: "https://hub.test", token: "token" }),
+      () => ({ needsMeIds: [] }),
+      () => undefined,
+      capture,
+      ((input) => {
+        calls += 1;
+        return Promise.resolve(
+          calls === 1
+            ? Promise.reject(new Error("network lost"))
+            : Response.json({ ok: true, readback: "Cancelled.", session: {} }),
+        );
+      }) as typeof fetch,
+    );
+
+    await controller.press();
+    await controller.release();
+    expect(controller.snapshot()).toMatchObject({
+      phase: "uncertain",
+      canCancel: true,
+    });
+    await controller.press();
+    expect(capture.starts).toBe(1);
+    await controller.cancel();
+    expect(controller.snapshot().phase).toBe("idle");
+    await controller.press();
+    expect(capture.starts).toBe(2);
   });
 });

@@ -31,6 +31,7 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
       mime: string;
       context: VoiceContext;
       intentId?: string;
+      clientSessionId: string;
     };
 
     try {
@@ -39,6 +40,9 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
       const audio = form.get("audio");
       const context = readVoiceContext(form.get("context"));
       const intentId = readIntentId(form.get("intentId"));
+      const clientSessionId = readClientSessionId(
+        c.req.header("x-aspex-voice-session"),
+      );
 
       if (!isFileLike(audio)) {
         return c.json({ message: "Missing audio" }, 400);
@@ -48,6 +52,7 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
         bytes: new Uint8Array(await audio.arrayBuffer()),
         mime: audio.type,
         context,
+        clientSessionId,
         ...(intentId !== undefined ? { intentId } : {}),
       };
     } catch (error) {
@@ -59,6 +64,7 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
       request.mime,
       request.context,
       request.intentId,
+      request.clientSessionId,
     );
     return c.json(cacheAudioResult(result, audioCache));
   });
@@ -68,7 +74,11 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
       return c.json({ error: "intent not configured" }, 503);
     }
 
-    let request: { text: string; context: VoiceContext };
+    let request: {
+      text: string;
+      context: VoiceContext;
+      clientSessionId: string;
+    };
 
     try {
       cleanupAudioCache(audioCache, Date.now());
@@ -81,7 +91,13 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
 
       const context = isRecord(body) ? body.context : undefined;
       assertVoiceContext(context);
-      request = { text, context };
+      request = {
+        text,
+        context,
+        clientSessionId: readClientSessionId(
+          c.req.header("x-aspex-voice-session"),
+        ),
+      };
     } catch (error) {
       return c.json({ message: validationMessage(error) }, 400);
     }
@@ -89,6 +105,8 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
     const result = await deps.voiceGateway.handleText(
       request.text,
       request.context,
+      undefined,
+      request.clientSessionId,
     );
     return c.json(cacheAudioResult(result, audioCache));
   });
@@ -97,9 +115,19 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
     if (deps.voiceGateway === undefined) {
       return c.json({ error: "voice not configured" }, 503);
     }
-    return c.json(
-      cacheAudioResult(await deps.voiceGateway.cancel(), audioCache),
-    );
+    try {
+      const clientSessionId = readClientSessionId(
+        c.req.header("x-aspex-voice-session"),
+      );
+      return c.json(
+        cacheAudioResult(
+          await deps.voiceGateway.cancel(clientSessionId),
+          audioCache,
+        ),
+      );
+    } catch (error) {
+      return c.json({ message: validationMessage(error) }, 400);
+    }
   });
 
   app.get("/voice/audio/:id", (c) => {
@@ -157,6 +185,13 @@ function readIntentId(value: FormDataEntryValue | null): string | undefined {
   }
   if (typeof value !== "string" || !isValidIntentId(value)) {
     throw new Error("Invalid intentId");
+  }
+  return value;
+}
+
+function readClientSessionId(value: string | undefined): string {
+  if (value === undefined || !isValidIntentId(value)) {
+    throw new Error("Invalid voice session");
   }
   return value;
 }

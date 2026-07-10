@@ -113,6 +113,11 @@ For example, merge usually reads back `Say 'confirm merge' to Merge <itemId>.`
 The matching confirm dispatches once with payload `{ confirmed: true }` and
 clears `pendingConfirm`.
 
+`ship` is distinct: it reads back `Say 'merge' or 'ship'` and only either
+spoken word confirms it.
+The Hub forwards that captured `mergeWord` with `confirmed: true`, and the
+Giles adapter refuses a ship direction without it.
+
 The pending confirm expires after `voice.confirmTtlMs`. A recognized navigation,
 read, open, action, or dictation command clears it. A parser `no_match` leaves it
 in place. A mismatched recognized confirm returns `unknown_command` and clears
@@ -120,7 +125,8 @@ it.
 
 A referent-less dispatch uses a sibling `pendingDispatch` record containing the client `intentId`, orchestrator, instruction, and `armedAt` time.
 The first dispatch utterance never calls the orchestrator, while `confirm dispatch` delivers exactly that stored intent.
-`POST /voice/cancel` clears either server-side arm without delivering an action or intent.
+`POST /voice/cancel` clears only the caller's server-side arm or dictation
+session without delivering an action or intent.
 
 ## Dictation
 

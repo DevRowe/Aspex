@@ -8,6 +8,7 @@ export type VoicePhase =
   | "recording"
   | "transcribing"
   | "armed"
+  | "uncertain"
   | "error";
 
 export interface VoiceState {
@@ -100,8 +101,10 @@ export class VoiceController {
   };
   private listeners = new Set<(state: VoiceState) => void>();
   private utteranceIntentId: string | null = null;
+  private hubSessionActive = false;
   private held = false;
   private readonly fetcher: Fetcher;
+  private readonly clientSessionId = createIntentId("voice-session");
 
   constructor(
     private config: () => DirectionConfig,
@@ -125,7 +128,8 @@ export class VoiceController {
   async press(): Promise<void> {
     if (
       this.state.phase === "recording" ||
-      this.state.phase === "transcribing"
+      this.state.phase === "transcribing" ||
+      this.state.phase === "uncertain"
     ) {
       return;
     }
@@ -177,7 +181,10 @@ export class VoiceController {
         `${trimUrl(cfg.hubUrl)}/voice/utterance`,
         {
           method: "POST",
-          headers: { authorization: `Bearer ${cfg.token}` },
+          headers: {
+            authorization: `Bearer ${cfg.token}`,
+            "x-aspex-voice-session": this.clientSessionId,
+          },
           body: form,
         },
       );
@@ -191,34 +198,59 @@ export class VoiceController {
       const armed =
         result.session.pendingConfirm !== undefined ||
         result.session.pendingDispatch !== undefined;
+      this.hubSessionActive = armed || result.session.dictating !== undefined;
       this.setState(
-        armed ? "armed" : result.ok ? "idle" : "error",
+        this.hubSessionActive ? "armed" : result.ok ? "idle" : "error",
         result.readback,
-        armed,
+        this.hubSessionActive,
       );
-    } catch (error) {
-      this.setState("error", errorMessage(error), false);
-    } finally {
       this.utteranceIntentId = null;
+    } catch (error) {
+      this.hubSessionActive = true;
+      this.setState(
+        "uncertain",
+        `${errorMessage(error)} Delivery is uncertain; cancel before speaking again.`,
+        true,
+      );
     }
   }
 
   async cancel(): Promise<void> {
     this.held = false;
     this.capture.cancel();
-    this.utteranceIntentId = null;
-    if (this.state.phase === "armed") {
+    const mustCancelHubSession =
+      this.hubSessionActive ||
+      this.state.phase === "transcribing" ||
+      this.state.phase === "uncertain";
+    if (mustCancelHubSession) {
       try {
         const cfg = this.config();
-        await this.fetcher(`${trimUrl(cfg.hubUrl)}/voice/cancel`, {
-          method: "POST",
-          headers: { authorization: `Bearer ${cfg.token}` },
-        });
-      } catch {
-        // The local arm is still cleared; the Hub-side arm also expires and
-        // cannot deliver without a later explicit confirm utterance.
+        const response = await this.fetcher(
+          `${trimUrl(cfg.hubUrl)}/voice/cancel`,
+          {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${cfg.token}`,
+              "x-aspex-voice-session": this.clientSessionId,
+            },
+          },
+        );
+        if (!response.ok) {
+          throw new Error(
+            `Voice cancellation failed with HTTP ${response.status}.`,
+          );
+        }
+      } catch (error) {
+        this.setState(
+          "uncertain",
+          `${errorMessage(error)} Cancellation is uncertain; try again before speaking.`,
+          true,
+        );
+        return;
       }
     }
+    this.hubSessionActive = false;
+    this.utteranceIntentId = null;
     this.setState("idle", "Cancelled. Hold to speak", false);
   }
 

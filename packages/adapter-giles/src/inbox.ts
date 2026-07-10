@@ -19,6 +19,7 @@ export interface GilesInboxIntent {
   targetTaskId: string | null;
   // Dictated body of answer/redirect/deny.
   text?: string;
+  mergeWord?: "merge" | "ship";
   // Dispatch only.
   project?: string;
   instruction?: string;

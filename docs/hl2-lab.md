@@ -69,7 +69,7 @@ If the installed Tailscale CLI uses a newer Serve syntax, reproduce the same two
 - Confirm gaze and articulated-hand pinch focus every control without resizing or shifting the card.
 - Hold push-to-talk, speak a safe status query, release, and confirm permission, recording, transcribing, and read-back states are legible.
 - With a dry-run Hub, arm approve, redirect, dispatch, and ship, then verify cancel and timeout create no inbox artifact.
-- Confirm ship requires a distinct second pinch or a separate `confirm ship` utterance.
+- Confirm ship requires entering `merge` or `ship`, or speaking either word after the ship prompt.
 - Walk away from Wi-Fi briefly and verify last-known cards remain visible with offline or stale labeling before reconnect.
 
 No physical HoloLens 2 verification is claimed by the initial implementation worker.
@@ -80,7 +80,7 @@ The automated demonstrations in `apps/hl2-lab/src/exitMoments.test.ts` use a fai
 
 1. A blocked real-shape `AttentionItem` exposes approve, the first request receives the Hub's 409 confirmation response, and only a second explicit confirm delivers with the same `intentId`.
 2. Dispatch receives 409, a second confirm delivers with the same `intentId`, and a resulting orchestrator item arriving in a streamed snapshot enters the glance carousel.
-3. Review-and-ship arms locally on the first pinch, sends no request at all, and sends one `confirmed: true` action only after the explicit merge-word confirm.
+3. Review-and-ship arms locally on the first pinch, sends no request at all, and sends one `confirmed: true` action with the explicit merge word only after the separate confirmation.
 
 The voice-gateway tests separately demonstrate `dispatch …` followed by `confirm dispatch`, with the first client `intentId` preserved and no first-utterance delivery.
 Real-Hub verification is deliberately read-only and is recorded separately from these simulated consequential flows.
