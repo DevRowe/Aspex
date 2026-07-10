@@ -16,6 +16,39 @@ describe("voice open staging", () => {
     });
   });
 
+  test("stages only absolute HTTP(S) links", () => {
+    expect(
+      stageOpen(
+        [item({ deepLink: "http://example.test/tasks/1" })],
+        "orchestrator:giles:lab-one",
+      ),
+    ).not.toBeNull();
+    expect(
+      stageOpen(
+        [item({ deepLink: "https://example.test/tasks/1" })],
+        "orchestrator:giles:lab-one",
+      ),
+    ).not.toBeNull();
+  });
+
+  test.each([
+    "/workspace/aspex",
+    "tasks/1",
+    "file:///workspace/aspex",
+    "javascript:alert(1)",
+    "data:text/html,unsafe",
+    "aspex://task/1",
+    "http:example.test/tasks/1",
+    "https://",
+  ])("does not stage unsupported link %s", (deepLink) => {
+    const pending = stageOpen(
+      [item({ deepLink })],
+      "orchestrator:giles:lab-one",
+    );
+
+    expect(pending).toBeNull();
+  });
+
   test("opens a staged item only through an explicit opener call", () => {
     const calls: unknown[][] = [];
     const opened = openStagedItem(

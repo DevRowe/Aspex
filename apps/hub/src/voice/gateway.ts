@@ -187,9 +187,12 @@ export class VoiceGateway {
         context,
         candidates: this.deps.snapshotCandidates(),
       });
-      intent = isIntentResult(result)
-        ? result.intent
-        : freeformNoMatch(transcript.text);
+      intent = withFreeformIntentId(
+        isIntentResult(result)
+          ? result.intent
+          : freeformNoMatch(transcript.text),
+        intentId,
+      );
       provenance = "freeform";
     }
 
@@ -587,6 +590,23 @@ function noMatchReadback(reason: NoMatchReason): string {
 
 function freeformNoMatch(text: string): Intent {
   return { kind: "no_match", heard: text, reason: "unknown_command" };
+}
+
+function withFreeformIntentId(
+  intent: Intent,
+  intentId: string | undefined,
+): Intent {
+  if (intentId === undefined) {
+    return intent;
+  }
+
+  switch (intent.kind) {
+    case "action":
+    case "dictate":
+      return { ...intent, intentId };
+    default:
+      return intent;
+  }
 }
 
 const isRecord = (x: unknown): x is Record<string, unknown> =>
