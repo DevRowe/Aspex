@@ -23,6 +23,7 @@
         "@aspex/adapter-claude-code": "workspace:*",
         "@aspex/adapter-codex": "workspace:*",
         "@aspex/adapter-cursor": "workspace:*",
+        "@aspex/adapter-giles": "workspace:*",
         "@aspex/adapter-github": "workspace:*",
         "@aspex/adapter-mock": "workspace:*",
         "@aspex/adapter-ntfy": "workspace:*",
@@ -77,6 +78,16 @@
     },
     "packages/adapter-cursor": {
       "name": "@aspex/adapter-cursor",
+      "dependencies": {
+        "@aspex/schema": "workspace:*",
+      },
+      "devDependencies": {
+        "bun-types": "latest",
+        "typescript": "^5.5.0",
+      },
+    },
+    "packages/adapter-giles": {
+      "name": "@aspex/adapter-giles",
       "dependencies": {
         "@aspex/schema": "workspace:*",
       },
@@ -148,6 +159,8 @@
     "@aspex/adapter-codex": ["@aspex/adapter-codex@workspace:packages/adapter-codex"],
 
     "@aspex/adapter-cursor": ["@aspex/adapter-cursor@workspace:packages/adapter-cursor"],
+
+    "@aspex/adapter-giles": ["@aspex/adapter-giles@workspace:packages/adapter-giles"],
 
     "@aspex/adapter-github": ["@aspex/adapter-github@workspace:packages/adapter-github"],
 

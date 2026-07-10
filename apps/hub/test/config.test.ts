@@ -107,6 +107,33 @@ describe("hub config", () => {
     expect(hubClientHost({ hubBind: "fd7a::1" })).toBe("[fd7a::1]");
   });
 
+  test("the giles orchestrator is off by default", async () => {
+    const cfg = await loadConfig({
+      defaultConfigPath: join(tmpdir(), `missing-aspex-${process.pid}.json`),
+      env: {},
+    });
+
+    expect(cfg.orchestrators?.giles?.enabled).toBe(false);
+    expect(cfg.orchestrators?.giles?.home).toBe(expandHome("~/giles"));
+  });
+
+  test("ASPEX_GILES_* env vars enable and point the giles orchestrator", async () => {
+    const cfg = await loadConfig({
+      defaultConfigPath: join(tmpdir(), `missing-aspex-${process.pid}.json`),
+      env: {
+        ASPEX_GILES_ENABLED: "true",
+        ASPEX_GILES_HOME: "/srv/giles",
+        ASPEX_GILES_POLL_INTERVAL_MS: "2500",
+      },
+    });
+
+    expect(cfg.orchestrators?.giles).toEqual({
+      enabled: true,
+      home: "/srv/giles",
+      pollIntervalMs: 2500,
+    });
+  });
+
   test("voice is disabled by default", async () => {
     const cfg = await loadConfig({
       defaultConfigPath: join(tmpdir(), `missing-aspex-${process.pid}.json`),

@@ -33,7 +33,18 @@ export interface AspexConfig {
   intent?: IntentConfig;
   previews?: PreviewConfig;
   adapters?: AdaptersConfig;
+  orchestrators?: OrchestratorsConfig;
   mock?: boolean;
+}
+
+export interface OrchestratorsConfig {
+  giles?: {
+    enabled: boolean;
+    // The Giles home directory the adapter reads (and whose designated
+    // state/aspex-inbox it delivers intents into).
+    home: string;
+    pollIntervalMs?: number;
+  };
 }
 
 export interface VoiceConfig {
@@ -103,6 +114,9 @@ type ConfigFile = Partial<
     opencode?: Partial<NonNullable<AdaptersConfig["opencode"]>>;
     cursor?: Partial<NonNullable<AdaptersConfig["cursor"]>>;
   };
+  orchestrators?: {
+    giles?: Partial<NonNullable<OrchestratorsConfig["giles"]>>;
+  };
 };
 
 const DEFAULT_VOICE_CONFIG: VoiceConfig = {
@@ -133,6 +147,10 @@ const DEFAULT_PREVIEW_CONFIG: PreviewConfig = {
   specs: [],
 };
 
+const DEFAULT_ORCHESTRATORS_CONFIG: OrchestratorsConfig = {
+  giles: { enabled: false, home: "~/giles" },
+};
+
 const DEFAULT_ADAPTERS_CONFIG: AdaptersConfig = {
   codex: { enabled: false },
   opencode: { enabled: false, serverUrl: "http://127.0.0.1:4096" },
@@ -149,6 +167,7 @@ export const DEFAULT_CONFIG: AspexConfig = {
   intent: DEFAULT_INTENT_CONFIG,
   previews: DEFAULT_PREVIEW_CONFIG,
   adapters: DEFAULT_ADAPTERS_CONFIG,
+  orchestrators: DEFAULT_ORCHESTRATORS_CONFIG,
   liveness: {
     pollGraceMs: 90_000,
     heartbeatGraceMs: 120_000,
@@ -294,6 +313,10 @@ function mergeConfig(base: AspexConfig, override: ConfigFile): AspexConfig {
     intent: mergeIntentConfig(base.intent, override.intent),
     previews: mergePreviewConfig(base.previews, override.previews),
     adapters: mergeAdaptersConfig(base.adapters, override.adapters),
+    orchestrators: mergeOrchestratorsConfig(
+      base.orchestrators,
+      override.orchestrators,
+    ),
   };
 }
 
@@ -436,6 +459,26 @@ function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
     env.ASPEX_CURSOR_SECRET !== undefined
       ? optionalNonEmptyEnv(env.ASPEX_CURSOR_SECRET, "ASPEX_CURSOR_SECRET")
       : undefined;
+  const gilesEnabled =
+    env.ASPEX_GILES_ENABLED !== undefined
+      ? parseBoolean(
+          env.ASPEX_GILES_ENABLED,
+          cfg.orchestrators?.giles?.enabled,
+          "ASPEX_GILES_ENABLED",
+        )
+      : undefined;
+  const gilesHome =
+    env.ASPEX_GILES_HOME !== undefined
+      ? optionalNonEmptyEnv(env.ASPEX_GILES_HOME, "ASPEX_GILES_HOME")
+      : undefined;
+  const gilesPollIntervalMs =
+    env.ASPEX_GILES_POLL_INTERVAL_MS !== undefined
+      ? parseInteger(
+          env.ASPEX_GILES_POLL_INTERVAL_MS,
+          cfg.orchestrators?.giles?.pollIntervalMs,
+          "ASPEX_GILES_POLL_INTERVAL_MS",
+        )
+      : undefined;
   const github =
     githubToken !== undefined ||
     (cfg.github !== undefined && githubAllowlist !== undefined)
@@ -563,6 +606,24 @@ function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
         },
       }
     : cfg.adapters;
+  const hasGilesEnv =
+    gilesEnabled !== undefined ||
+    gilesHome !== undefined ||
+    gilesPollIntervalMs !== undefined;
+  const orchestratorsBase = cfg.orchestrators ?? DEFAULT_ORCHESTRATORS_CONFIG;
+  const orchestrators: AspexConfig["orchestrators"] = hasGilesEnv
+    ? {
+        ...orchestratorsBase,
+        giles: {
+          ...(orchestratorsBase.giles ?? { enabled: false, home: "~/giles" }),
+          ...(gilesEnabled !== undefined ? { enabled: gilesEnabled } : {}),
+          ...(gilesHome !== undefined ? { home: gilesHome } : {}),
+          ...(gilesPollIntervalMs !== undefined
+            ? { pollIntervalMs: gilesPollIntervalMs }
+            : {}),
+        },
+      }
+    : cfg.orchestrators;
 
   const auth = hubToken !== undefined ? { token: hubToken } : cfg.auth;
 
@@ -594,6 +655,7 @@ function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
     intent,
     previews,
     adapters,
+    orchestrators,
     liveness: {
       ...cfg.liveness,
       pollGraceMs: parseInteger(
@@ -635,6 +697,7 @@ function normalizeConfig(cfg: AspexConfig): AspexConfig {
     intent: normalizeIntentConfig(cfg.intent, cfg.mock),
     previews: normalizePreviewConfig(cfg.previews),
     adapters: normalizeAdaptersConfig(cfg.adapters),
+    orchestrators: normalizeOrchestratorsConfig(cfg.orchestrators),
   };
 
   if (normalized.auth !== undefined) {
@@ -654,6 +717,60 @@ function normalizeConfig(cfg: AspexConfig): AspexConfig {
   }
 
   return normalized;
+}
+
+function normalizeOrchestratorsConfig(
+  orchestrators: OrchestratorsConfig | undefined,
+): OrchestratorsConfig {
+  const merged = mergeOrchestratorsConfig(
+    DEFAULT_ORCHESTRATORS_CONFIG,
+    orchestrators,
+  );
+  const giles = merged?.giles ?? { enabled: false, home: "~/giles" };
+
+  if (typeof giles.enabled !== "boolean") {
+    throw new Error("orchestrators.giles.enabled must be a boolean");
+  }
+
+  if (typeof giles.home !== "string" || giles.home.trim() === "") {
+    throw new Error("orchestrators.giles.home must be a non-empty path");
+  }
+
+  if (
+    giles.pollIntervalMs !== undefined &&
+    (!Number.isInteger(giles.pollIntervalMs) || giles.pollIntervalMs <= 0)
+  ) {
+    throw new Error(
+      "orchestrators.giles.pollIntervalMs must be a positive integer when set",
+    );
+  }
+
+  return {
+    giles: {
+      enabled: giles.enabled,
+      home: expandHome(giles.home.trim()),
+      ...(giles.pollIntervalMs === undefined
+        ? {}
+        : { pollIntervalMs: giles.pollIntervalMs }),
+    },
+  };
+}
+
+function mergeOrchestratorsConfig(
+  base: OrchestratorsConfig | undefined,
+  override: ConfigFile["orchestrators"] | undefined,
+): OrchestratorsConfig | undefined {
+  if (override === undefined) {
+    return base;
+  }
+
+  return {
+    ...(base ?? DEFAULT_ORCHESTRATORS_CONFIG),
+    giles: {
+      ...(base?.giles ?? { enabled: false, home: "~/giles" }),
+      ...override.giles,
+    },
+  } as OrchestratorsConfig;
 }
 
 function normalizeHubBind(bind: unknown): string {

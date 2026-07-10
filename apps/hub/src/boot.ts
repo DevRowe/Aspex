@@ -3,11 +3,13 @@ import { dirname } from "node:path";
 import { ClaudeCodeAdapter } from "@aspex/adapter-claude-code";
 import { CodexAdapter } from "@aspex/adapter-codex";
 import { CursorAdapter } from "@aspex/adapter-cursor";
+import { GilesOrchestrator } from "@aspex/adapter-giles";
 import { GithubAdapter } from "@aspex/adapter-github";
 import { MockAdapter } from "@aspex/adapter-mock";
 import { NtfyNotifier } from "@aspex/adapter-ntfy";
 import { OpenCodeAdapter } from "@aspex/adapter-opencode";
 import { WebhookAdapter } from "@aspex/adapter-webhook";
+import { OrchestratorRegistry } from "./adapters/orchestrators";
 import { AdapterRegistry } from "./adapters/registry";
 import { Bus } from "./bus";
 import { type AspexConfig, resolvedLivenessConfig } from "./config";
@@ -97,6 +99,23 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
 
   if (cfg.adapters?.cursor?.enabled === true) {
     registry.register(new CursorAdapter());
+  }
+
+  // Orchestrators are a separate first-class registry: bidirectional peers
+  // that own agents, not observed sources. Off by default; the reference
+  // Giles orchestrator reads the Giles home read-only and delivers direction
+  // intents into its designated inbox.
+  const orchestrators = new OrchestratorRegistry(world, liveness);
+
+  if (cfg.orchestrators?.giles?.enabled === true) {
+    orchestrators.register(
+      new GilesOrchestrator({
+        home: cfg.orchestrators.giles.home,
+        ...(cfg.orchestrators.giles.pollIntervalMs !== undefined
+          ? { pollIntervalMs: cfg.orchestrators.giles.pollIntervalMs }
+          : {}),
+      }),
+    );
   }
 
   if (cfg.ntfy !== undefined) {
@@ -200,6 +219,7 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
     },
     bus,
     registry,
+    orchestrators,
     world,
     start: async () => {
       const previewDeps = await preparePreviews(cfg, {
@@ -226,6 +246,7 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
               },
       });
       await registry.startAll();
+      await orchestrators.startAll();
       liveness.start();
     },
     stop: async () => {
@@ -234,6 +255,7 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
         previewSweep = undefined;
       }
       liveness.stop();
+      await orchestrators.stopAll();
       await registry.stopAll();
       await previewBroker?.shutdown();
       db.close();

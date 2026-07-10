@@ -8,7 +8,7 @@ const FAR_FUTURE_MS = Date.UTC(9999, 0, 1);
 // in-flight `working`/`blocked` states decay. Terminal-ness (liveness axis) is
 // orthogonal to attentionRequired (ADR-0002): an Item can be error · live · needs-me.
 export const TERMINAL = new Set<State>(["done", "error"]);
-export const POLLED = new Set<Source>(["github"]);
+export const POLLED = new Set<Source>(["github", "orchestrator"]);
 
 export interface LivenessConfig {
   pollGraceMs: number;
