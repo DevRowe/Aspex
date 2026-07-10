@@ -1,0 +1,604 @@
+import { describe, expect, test } from "bun:test";
+import {
+  type Capture,
+  type CaptureSession,
+  MicrophoneCapture,
+  VoiceController,
+} from "./voice";
+
+class FakeCapture implements Capture {
+  starts = 0;
+  stops = 0;
+  cancelled = 0;
+  denied = false;
+
+  start(): CaptureSession {
+    this.starts += 1;
+    if (this.denied) {
+      return {
+        ready: () =>
+          Promise.reject(new DOMException("denied", "NotAllowedError")),
+        stop: async () => null,
+        cancel: () => undefined,
+      };
+    }
+    return {
+      ready: async () => undefined,
+      stop: async () => {
+        this.stops += 1;
+        return new Blob(["audio"], { type: "audio/webm" });
+      },
+      cancel: () => {
+        this.cancelled += 1;
+      },
+    };
+  }
+}
+
+describe("VoiceController", () => {
+  test("moves permission → recording → transcribing → armed through the existing voice endpoint", async () => {
+    const capture = new FakeCapture();
+    const phases: string[] = [];
+    let request: Request | undefined;
+    const controller = new VoiceController(
+      () => ({ hubUrl: "https://hub.test", token: "token" }),
+      () => ({ selectedId: "item", needsMeIds: ["item"] }),
+      () => undefined,
+      capture,
+      ((input, init) => {
+        request = new Request(input, init);
+        return Promise.resolve(
+          Response.json({
+            ok: true,
+            readback: "Say confirm ship.",
+            session: {
+              pendingConfirm: {
+                itemId: "item",
+                actionId: "ship",
+                label: "Ship",
+                armedAt: new Date().toISOString(),
+              },
+            },
+          }),
+        );
+      }) as typeof fetch,
+    );
+    controller.subscribe((state) => phases.push(state.phase));
+    await controller.press();
+    const release = controller.release();
+    expect(controller.snapshot().phase).toBe("transcribing");
+    await release;
+    expect(phases).toEqual([
+      "permission",
+      "recording",
+      "transcribing",
+      "armed",
+    ]);
+    expect(request?.url).toBe("https://hub.test/voice/utterance");
+    expect(request?.headers.get("authorization")).toBe("Bearer token");
+    expect(request?.headers.get("x-aspex-voice-session")).toMatch(
+      /^hl2-.*-voice-session-/,
+    );
+  });
+
+  test("reports microphone denial explicitly", async () => {
+    const capture = new FakeCapture();
+    capture.denied = true;
+    const controller = new VoiceController(
+      () => ({ hubUrl: "https://hub.test", token: "token" }),
+      () => ({ needsMeIds: [] }),
+      () => undefined,
+      capture,
+    );
+    await controller.press();
+    expect(controller.snapshot()).toEqual({
+      phase: "error",
+      message: "Microphone permission denied.",
+      canCancel: false,
+    });
+  });
+
+  test("a release during the permission prompt cancels capture as soon as permission resolves", async () => {
+    let allow: (() => void) | undefined;
+    const capture: Capture = {
+      start: () =>
+        ({
+          ready: () =>
+            new Promise<void>((resolve) => {
+              allow = resolve;
+            }),
+          stop: async () => null,
+          cancel: () => {
+            cancelled += 1;
+          },
+        }) satisfies CaptureSession,
+    };
+    let cancelled = 0;
+    const controller = new VoiceController(
+      () => ({ hubUrl: "https://hub.test", token: "token" }),
+      () => ({ needsMeIds: [] }),
+      () => undefined,
+      capture,
+    );
+    const pressing = controller.press();
+    await controller.release();
+    allow?.();
+    await pressing;
+    expect(cancelled).toBe(1);
+    expect(controller.snapshot().phase).toBe("idle");
+  });
+
+  test("cancels an armed voice session without posting an action", async () => {
+    const capture = new FakeCapture();
+    const urls: string[] = [];
+    const controller = new VoiceController(
+      () => ({ hubUrl: "https://hub.test", token: "token" }),
+      () => ({ needsMeIds: [] }),
+      () => undefined,
+      capture,
+      ((input) => {
+        urls.push(String(input));
+        return Promise.resolve(
+          urls.length === 1
+            ? Response.json({
+                ok: true,
+                readback: "Say confirm ship.",
+                session: {
+                  pendingConfirm: {
+                    itemId: "item",
+                    actionId: "ship",
+                    label: "Ship",
+                    armedAt: new Date().toISOString(),
+                  },
+                },
+              })
+            : Response.json({ ok: true, readback: "Cancelled.", session: {} }),
+        );
+      }) as typeof fetch,
+    );
+    await controller.press();
+    await controller.release();
+    expect(controller.snapshot().phase).toBe("armed");
+    await controller.cancel();
+    expect(capture.cancelled).toBe(1);
+    expect(urls).toEqual([
+      "https://hub.test/voice/utterance",
+      "https://hub.test/voice/cancel",
+    ]);
+  });
+
+  test("cancels a dictation session on the Hub", async () => {
+    const urls: string[] = [];
+    const controller = new VoiceController(
+      () => ({ hubUrl: "https://hub.test", token: "token" }),
+      () => ({ needsMeIds: [] }),
+      () => undefined,
+      new FakeCapture(),
+      ((input) => {
+        urls.push(String(input));
+        return Promise.resolve(
+          urls.length === 1
+            ? Response.json({
+                ok: true,
+                readback: "Dictate your comment.",
+                session: {
+                  dictating: { itemId: "item", actionId: "comment" },
+                },
+              })
+            : Response.json({ ok: true, readback: "Cancelled.", session: {} }),
+        );
+      }) as typeof fetch,
+    );
+
+    await controller.press();
+    await controller.release();
+    expect(controller.snapshot()).toMatchObject({
+      phase: "armed",
+      canCancel: true,
+    });
+    await controller.cancel();
+    expect(urls).toEqual([
+      "https://hub.test/voice/utterance",
+      "https://hub.test/voice/cancel",
+    ]);
+  });
+
+  test("ignores a late utterance result after cancelling its upload", async () => {
+    let resolveUtterance: ((response: Response) => void) | undefined;
+    const generations: string[] = [];
+    const controller = new VoiceController(
+      () => ({ hubUrl: "https://hub.test", token: "token" }),
+      () => ({ needsMeIds: [] }),
+      () => undefined,
+      new FakeCapture(),
+      ((input, init) => {
+        const request = new Request(input, init);
+        generations.push(request.headers.get("x-aspex-voice-generation") ?? "");
+        if (request.url.endsWith("/voice/utterance")) {
+          return new Promise<Response>((resolve) => {
+            resolveUtterance = resolve;
+          });
+        }
+        return Promise.resolve(
+          Response.json({ ok: true, readback: "Cancelled.", session: {} }),
+        );
+      }) as typeof fetch,
+    );
+
+    await controller.press();
+    const releasing = controller.release();
+    await Promise.resolve();
+    await controller.cancel();
+    resolveUtterance?.(
+      Response.json({
+        ok: true,
+        readback: "Say confirm ship.",
+        session: {
+          pendingConfirm: {
+            itemId: "item",
+            actionId: "ship",
+            label: "Ship",
+            armedAt: new Date().toISOString(),
+          },
+        },
+      }),
+    );
+    await releasing;
+
+    expect(generations).toEqual(["1", "2"]);
+    expect(controller.snapshot()).toEqual({
+      phase: "idle",
+      message: "Cancelled. Hold to speak",
+      canCancel: false,
+    });
+  });
+
+  test("blocks another utterance after an uncertain delivery until cancellation resolves", async () => {
+    const capture = new FakeCapture();
+    let calls = 0;
+    const controller = new VoiceController(
+      () => ({ hubUrl: "https://hub.test", token: "token" }),
+      () => ({ needsMeIds: [] }),
+      () => undefined,
+      capture,
+      ((input) => {
+        calls += 1;
+        return Promise.resolve(
+          calls === 1
+            ? Promise.reject(new Error("network lost"))
+            : Response.json({ ok: true, readback: "Cancelled.", session: {} }),
+        );
+      }) as typeof fetch,
+    );
+
+    await controller.press();
+    await controller.release();
+    expect(controller.snapshot()).toMatchObject({
+      phase: "uncertain",
+      canCancel: true,
+    });
+    await controller.press();
+    expect(capture.starts).toBe(1);
+    await controller.cancel();
+    expect(controller.snapshot().phase).toBe("idle");
+    await controller.press();
+    expect(capture.starts).toBe(2);
+  });
+
+  test("blocks a new capture until a pending Hub cancellation resolves", async () => {
+    const capture = new FakeCapture();
+    let resolveCancellation: ((response: Response) => void) | undefined;
+    const controller = new VoiceController(
+      () => ({ hubUrl: "https://hub.test", token: "token" }),
+      () => ({ needsMeIds: [] }),
+      () => undefined,
+      capture,
+      ((input) => {
+        if (String(input).endsWith("/voice/utterance")) {
+          return Promise.resolve(
+            Response.json({
+              ok: true,
+              readback: "Say confirm ship.",
+              session: {
+                pendingConfirm: {
+                  itemId: "item",
+                  actionId: "ship",
+                  label: "Ship",
+                  armedAt: new Date().toISOString(),
+                },
+              },
+            }),
+          );
+        }
+        return new Promise<Response>((resolve) => {
+          resolveCancellation = resolve;
+        });
+      }) as typeof fetch,
+    );
+
+    await controller.press();
+    await controller.release();
+    const cancelling = controller.cancel();
+    await Promise.resolve();
+    expect(controller.snapshot().phase).toBe("cancelling");
+    await controller.press();
+    expect(capture.starts).toBe(1);
+
+    resolveCancellation?.(
+      Response.json({ ok: true, readback: "Cancelled.", session: {} }),
+    );
+    await cancelling;
+    await controller.press();
+    expect(capture.starts).toBe(2);
+  });
+});
+
+describe("MicrophoneCapture", () => {
+  test("stops granted tracks when MediaRecorder construction fails", async () => {
+    const originalNavigator = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "navigator",
+    );
+    const originalMediaRecorder = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "MediaRecorder",
+    );
+    const stream = fakeStream();
+
+    class ThrowingRecorder {
+      constructor(_stream: MediaStream) {
+        throw new Error("recorder unavailable");
+      }
+    }
+
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        mediaDevices: { getUserMedia: async () => stream.stream },
+      },
+    });
+    Object.defineProperty(globalThis, "MediaRecorder", {
+      configurable: true,
+      value: ThrowingRecorder,
+    });
+
+    try {
+      const session = new MicrophoneCapture().start();
+      await expect(session.ready()).rejects.toThrow("recorder unavailable");
+      expect(stream.stopped()).toBe(true);
+    } finally {
+      restoreGlobal("navigator", originalNavigator);
+      restoreGlobal("MediaRecorder", originalMediaRecorder);
+    }
+  });
+
+  test("stops granted tracks and releases ownership when recorder start fails", async () => {
+    const originalNavigator = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "navigator",
+    );
+    const originalMediaRecorder = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "MediaRecorder",
+    );
+    const stream = fakeStream();
+
+    class ThrowingRecorder {
+      state: RecordingState = "inactive";
+      mimeType = "audio/webm";
+
+      addEventListener(): void {}
+
+      start(): void {
+        throw new Error("recorder failed to start");
+      }
+    }
+
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        mediaDevices: { getUserMedia: async () => stream.stream },
+      },
+    });
+    Object.defineProperty(globalThis, "MediaRecorder", {
+      configurable: true,
+      value: ThrowingRecorder,
+    });
+
+    try {
+      const capture = new MicrophoneCapture();
+      const session = capture.start();
+      await expect(session.ready()).rejects.toThrow("recorder failed to start");
+      expect(stream.stopped()).toBe(true);
+      expect(
+        (capture as unknown as { activeCapture: unknown }).activeCapture,
+      ).toBeNull();
+    } finally {
+      restoreGlobal("navigator", originalNavigator);
+      restoreGlobal("MediaRecorder", originalMediaRecorder);
+    }
+  });
+
+  test("does not let a cancelled permission request stop a newer capture", async () => {
+    const originalNavigator = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "navigator",
+    );
+    const originalMediaRecorder = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "MediaRecorder",
+    );
+    const resolvers: Array<(stream: MediaStream) => void> = [];
+    const recorders: FakeRecorder[] = [];
+    const older = fakeStream();
+    const newer = fakeStream();
+
+    class FakeRecorder {
+      state: RecordingState = "inactive";
+      mimeType = "audio/webm";
+      private listeners = new Map<string, Array<() => void>>();
+
+      constructor(_stream: MediaStream) {
+        recorders.push(this);
+      }
+
+      addEventListener(type: string, listener: () => void): void {
+        const listeners = this.listeners.get(type) ?? [];
+        listeners.push(listener);
+        this.listeners.set(type, listeners);
+      }
+
+      start(): void {
+        this.state = "recording";
+      }
+
+      stop(): void {
+        this.state = "inactive";
+        queueMicrotask(() => {
+          for (const listener of this.listeners.get("stop") ?? []) {
+            listener();
+          }
+        });
+      }
+    }
+
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        mediaDevices: {
+          getUserMedia: () =>
+            new Promise<MediaStream>((resolve) => resolvers.push(resolve)),
+        },
+      },
+    });
+    Object.defineProperty(globalThis, "MediaRecorder", {
+      configurable: true,
+      value: FakeRecorder,
+    });
+
+    try {
+      const controller = new VoiceController(
+        () => ({ hubUrl: "https://hub.test", token: "token" }),
+        () => ({ needsMeIds: [] }),
+        () => undefined,
+      );
+      const firstPress = controller.press();
+      await controller.cancel();
+      const secondPress = controller.press();
+      resolvers[1]?.(newer.stream);
+      await secondPress;
+      resolvers[0]?.(older.stream);
+      await firstPress;
+
+      expect(older.stopped()).toBe(true);
+      expect(newer.stopped()).toBe(false);
+      expect(recorders).toHaveLength(1);
+      expect(recorders[0]?.state).toBe("recording");
+      await controller.release();
+    } finally {
+      restoreGlobal("navigator", originalNavigator);
+      restoreGlobal("MediaRecorder", originalMediaRecorder);
+    }
+  });
+
+  test("does not include late cancelled recorder chunks in the next capture", async () => {
+    const originalNavigator = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "navigator",
+    );
+    const originalMediaRecorder = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "MediaRecorder",
+    );
+    let recorderCount = 0;
+
+    class FakeRecorder {
+      state: RecordingState = "inactive";
+      mimeType = "audio/webm";
+      private listeners = new Map<
+        string,
+        Array<(event: { data: Blob }) => void>
+      >();
+      private readonly content = recorderCount++ === 0 ? "cancelled" : "kept";
+
+      addEventListener(
+        type: string,
+        listener: (event: { data: Blob }) => void,
+      ): void {
+        const listeners = this.listeners.get(type) ?? [];
+        listeners.push(listener);
+        this.listeners.set(type, listeners);
+      }
+
+      start(): void {
+        this.state = "recording";
+      }
+
+      stop(): void {
+        this.state = "inactive";
+        queueMicrotask(() => {
+          for (const listener of this.listeners.get("dataavailable") ?? []) {
+            listener({ data: new Blob([this.content]) });
+          }
+          for (const listener of this.listeners.get("stop") ?? []) {
+            listener({ data: new Blob() });
+          }
+        });
+      }
+    }
+
+    const stream = {
+      getTracks: () => [{ stop: () => undefined }],
+    } as unknown as MediaStream;
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { mediaDevices: { getUserMedia: async () => stream } },
+    });
+    Object.defineProperty(globalThis, "MediaRecorder", {
+      configurable: true,
+      value: FakeRecorder,
+    });
+
+    try {
+      const capture = new MicrophoneCapture();
+      const cancelled = capture.start();
+      await cancelled.ready();
+      cancelled.cancel();
+      const kept = capture.start();
+      await kept.ready();
+      const audio = await kept.stop();
+
+      expect(await audio?.text()).toBe("kept");
+    } finally {
+      restoreGlobal("navigator", originalNavigator);
+      restoreGlobal("MediaRecorder", originalMediaRecorder);
+    }
+  });
+});
+
+function fakeStream(): { stream: MediaStream; stopped(): boolean } {
+  let stopped = false;
+  return {
+    stream: {
+      getTracks: () => [
+        {
+          stop: () => {
+            stopped = true;
+          },
+        },
+      ],
+    } as unknown as MediaStream,
+    stopped: () => stopped,
+  };
+}
+
+function restoreGlobal(
+  name: string,
+  descriptor: PropertyDescriptor | undefined,
+): void {
+  if (descriptor === undefined) {
+    Reflect.deleteProperty(globalThis, name);
+    return;
+  }
+  Object.defineProperty(globalThis, name, descriptor);
+}

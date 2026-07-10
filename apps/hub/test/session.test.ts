@@ -67,6 +67,43 @@ describe("reduce", () => {
     expect(result.effect).not.toHaveProperty("confirmed");
   });
 
+  test("ship only dispatches after a merge word is captured", () => {
+    const shipSession: VoiceSession = {
+      pendingConfirm: {
+        itemId,
+        actionId: "ship",
+        label: "Review & ship",
+        armedAt: new Date(now).toISOString(),
+      },
+    };
+
+    expect(
+      reduce(
+        shipSession,
+        { kind: "confirm", itemId, actionId: "ship" },
+        meta({ requiresConfirmation: () => true }),
+      ),
+    ).toEqual({
+      next: {},
+      effect: { kind: "noMatch", reason: "unknown_command" },
+    });
+    expect(
+      reduce(
+        shipSession,
+        { kind: "confirm", itemId, actionId: "ship", mergeWord: "merge" },
+        meta({ requiresConfirmation: () => true }),
+      ),
+    ).toEqual({
+      next: {},
+      effect: {
+        kind: "dispatch",
+        itemId,
+        actionId: "ship",
+        payload: { mergeWord: "merge" },
+      },
+    });
+  });
+
   test("mismatched confirm noMatches and clears pendingConfirm", () => {
     expect(
       reduce(
@@ -184,6 +221,114 @@ describe("reduce", () => {
     expect(reduce(session, { kind: "cancel" }, meta())).toEqual({
       next: {},
       effect: { kind: "cancelled" },
+    });
+  });
+
+  test("dispatch arms, confirm dispatch delivers once, and cancel delivers nothing", () => {
+    const armed = reduce(
+      {},
+      {
+        kind: "dispatch_task",
+        intentId: "hl2-dispatch-1",
+        orchestrator: "giles",
+        instruction: "build the wear test",
+      },
+      meta(),
+    );
+    expect(armed.effect).toEqual({
+      kind: "armedDispatch",
+      instruction: "build the wear test",
+    });
+    expect(armed.next.pendingDispatch?.intentId).toBe("hl2-dispatch-1");
+
+    const confirmed = reduce(
+      armed.next,
+      { kind: "confirm_dispatch", intentId: "hl2-dispatch-1" },
+      meta(),
+    );
+    expect(confirmed).toEqual({
+      next: {},
+      effect: {
+        kind: "dispatchIntent",
+        intentId: "hl2-dispatch-1",
+        orchestrator: "giles",
+        instruction: "build the wear test",
+      },
+    });
+    expect(reduce(armed.next, { kind: "cancel" }, meta())).toEqual({
+      next: {},
+      effect: { kind: "cancelled" },
+    });
+  });
+
+  test("assigns distinct fallback IDs to independent commands in one millisecond", () => {
+    const randomUuids = [
+      "00000000-0000-4000-8000-000000000001",
+      "00000000-0000-4000-8000-000000000002",
+    ];
+    const sameMillisecond = meta({
+      randomUuid: () => {
+        const uuid = randomUuids.shift();
+        if (uuid === undefined) {
+          throw new Error("Unexpected fallback intent ID request.");
+        }
+        return uuid;
+      },
+    });
+    const first = reduce(
+      {},
+      {
+        kind: "dispatch_task",
+        orchestrator: "giles",
+        instruction: "build the wear test",
+      },
+      sameMillisecond,
+    );
+    const second = reduce(
+      {},
+      {
+        kind: "dispatch_task",
+        orchestrator: "giles",
+        instruction: "check the wear test",
+      },
+      sameMillisecond,
+    );
+    const firstId = first.next.pendingDispatch?.intentId;
+    const secondId = second.next.pendingDispatch?.intentId;
+
+    expect(firstId).toBe(
+      `voice-${now.toString(36)}-00000000-0000-4000-8000-000000000001`,
+    );
+    expect(secondId).toBe(
+      `voice-${now.toString(36)}-00000000-0000-4000-8000-000000000002`,
+    );
+  });
+
+  test("consequential redirect dictation arms with text and intent id instead of dispatching", () => {
+    const dictating = reduce(
+      {},
+      {
+        kind: "dictate",
+        itemId,
+        actionId: "redirect",
+        intentId: "hl2-redirect-1",
+      },
+      meta({ requiresConfirmation: () => true }),
+    );
+    const body = reduce(
+      dictating.next,
+      { kind: "dictation_body", text: "focus auth" },
+      meta({ requiresConfirmation: () => true }),
+    );
+    const posted = reduce(
+      body.next,
+      { kind: "post" },
+      meta({ requiresConfirmation: () => true }),
+    );
+    expect(posted.effect.kind).toBe("armed");
+    expect(posted.next.pendingConfirm?.payload).toEqual({
+      text: "focus auth",
+      intentId: "hl2-redirect-1",
     });
   });
 

@@ -197,6 +197,7 @@ export function ItemDetail({ item }: ItemDetailProps) {
         {hasExecutableActions ? (
           <div className="mt-3 grid gap-3">
             {item.actions.map((action) =>
+              action.id === "ship" ||
               action.risk === "dangerous" ||
               (action.requiresConfirmation && action.risk !== "medium") ? (
                 <ConfirmGate

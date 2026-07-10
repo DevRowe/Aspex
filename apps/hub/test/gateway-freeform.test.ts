@@ -141,6 +141,62 @@ describe("VoiceGateway free-form fallback", () => {
     expect(confirmed.readback).toBe("Action done.");
   });
 
+  test("preserves the client intent id through free-form action confirmation", async () => {
+    const { service } = withMockIntentService([
+      { kind: "action", itemId, actionId: "approve" },
+    ]);
+    const { gateway, dispatchAction } = makeGateway(
+      ["please approve the atlas review", "confirm approve"],
+      { intentService: service },
+    );
+
+    const armed = await gateway.handle(
+      audio,
+      "audio/webm",
+      context,
+      "freeform-action-1",
+    );
+    await gateway.handle(audio, "audio/webm", context, "confirmation-2");
+
+    expect(armed.session.pendingConfirm?.intentId).toBe("freeform-action-1");
+    expect(dispatchAction).toHaveBeenCalledWith(itemId, "approve", {
+      intentId: "freeform-action-1",
+      confirmed: true,
+    });
+  });
+
+  test("preserves the client intent id through free-form dictation confirmation", async () => {
+    const { service } = withMockIntentService([
+      { kind: "dictate", itemId, actionId: "comment" },
+    ]);
+    const { gateway, dispatchAction } = makeGateway(
+      [
+        "leave a comment on the atlas review",
+        "please check the migration notes",
+        "post it",
+        "confirm comment",
+      ],
+      {
+        intentService: service,
+        getSelectedActions: () => [
+          action("comment", { requiresConfirmation: true }),
+        ],
+      },
+    );
+
+    await gateway.handle(audio, "audio/webm", context, "freeform-dictation-1");
+    await gateway.handle(audio, "audio/webm", context, "dictation-body-2");
+    const armed = await gateway.handle(audio, "audio/webm", context, "post-3");
+    await gateway.handle(audio, "audio/webm", context, "confirmation-4");
+
+    expect(armed.session.pendingConfirm?.intentId).toBe("freeform-dictation-1");
+    expect(dispatchAction).toHaveBeenCalledWith(itemId, "comment", {
+      body: "please check the migration notes",
+      intentId: "freeform-dictation-1",
+      confirmed: true,
+    });
+  });
+
   test("low_confidence does not call intent service", async () => {
     const { gateway, resolve } = makeGateway([
       { text: "please approve the atlas review", confidence: 0.2 },

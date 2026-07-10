@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { isMergeWord, parseItemId } from "@aspex/schema";
 import type {
   Action,
   ActionResult,
@@ -13,7 +14,6 @@ import type {
   StatusQueryIntent,
   StatusReport,
 } from "@aspex/schema";
-import { parseItemId } from "@aspex/schema";
 import { type GilesInboxIntent, writeIntentFile } from "./inbox";
 import {
   type GilesTaskSnapshot,
@@ -133,6 +133,10 @@ export class GilesOrchestrator implements Orchestrator {
     }
 
     const body = isRecord(payload) ? payload : {};
+    const mergeWord = isMergeWord(body.mergeWord) ? body.mergeWord : undefined;
+    if (actionId === "ship" && mergeWord === undefined) {
+      return { ok: false, message: "Ship requires merge or ship confirmation" };
+    }
     const intent: GilesInboxIntent = {
       intentId:
         typeof body.intentId === "string" ? body.intentId : randomUUID(),
@@ -141,6 +145,7 @@ export class GilesOrchestrator implements Orchestrator {
       ...(typeof body.text === "string" && body.text.trim() !== ""
         ? { text: body.text }
         : {}),
+      ...(mergeWord !== undefined ? { mergeWord } : {}),
       confirmedAt: this.now().toISOString(),
       origin: "aspex-hub",
     };

@@ -13,8 +13,11 @@ export function ConfirmGate({ itemId, action, onResult }: ConfirmGateProps) {
   const [typed, setTyped] = useState("");
   const [pending, setPending] = useState(false);
   const pendingRef = useRef(false);
-  const confirmWord = action.label;
-  const canSubmit = typed === confirmWord && !pending;
+  const mergeWord = action.id === "ship" ? parseMergeWord(typed) : undefined;
+  const confirmWord = action.id === "ship" ? "merge or ship" : action.label;
+  const canSubmit =
+    (action.id === "ship" ? mergeWord !== undefined : typed === confirmWord) &&
+    !pending;
 
   const submit = async () => {
     if (!canSubmit || pendingRef.current) {
@@ -24,7 +27,14 @@ export function ConfirmGate({ itemId, action, onResult }: ConfirmGateProps) {
     pendingRef.current = true;
     setPending(true);
     try {
-      onResult(await runAction(itemId, action.id, true));
+      onResult(
+        await runAction(
+          itemId,
+          action.id,
+          true,
+          mergeWord === undefined ? undefined : { mergeWord },
+        ),
+      );
       setOpen(false);
       setTyped("");
     } catch (error) {
@@ -85,4 +95,11 @@ export function ConfirmGate({ itemId, action, onResult }: ConfirmGateProps) {
       </div>
     </div>
   );
+}
+
+function parseMergeWord(value: string): "merge" | "ship" | undefined {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "merge" || normalized === "ship"
+    ? normalized
+    : undefined;
 }

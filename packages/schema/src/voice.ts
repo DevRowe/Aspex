@@ -1,6 +1,6 @@
 import type { ItemId } from "./index";
 
-// Attached by the client to every Utterance so the Hub can resolve referents (ADR-0011).
+// Attached by the client to every utterance or typed intent so the Hub can resolve referents (ADR-0011).
 export interface VoiceContext {
   selectedId?: ItemId;
   needsMeIds: ItemId[];
@@ -16,9 +16,22 @@ export type Intent =
   | { kind: "nav"; directive: ClientDirective }
   | { kind: "read"; target: ItemId }
   | { kind: "open"; target: ItemId }
-  | { kind: "action"; itemId: ItemId; actionId: string }
-  | { kind: "confirm"; itemId: ItemId; actionId: string }
-  | { kind: "dictate"; itemId: ItemId; actionId: string }
+  | { kind: "action"; itemId: ItemId; actionId: string; intentId?: string }
+  | {
+      kind: "confirm";
+      itemId: ItemId;
+      actionId: string;
+      mergeWord?: MergeWord;
+    }
+  | { kind: "dictate"; itemId: ItemId; actionId: string; intentId?: string }
+  | {
+      kind: "dispatch_task";
+      instruction: string;
+      orchestrator: string;
+      intentId?: string;
+    }
+  | { kind: "confirm_dispatch"; intentId?: string }
+  | { kind: "status_query"; intentId?: string }
   | { kind: "dictation_body"; text: string }
   | { kind: "post" }
   | { kind: "cancel" }
@@ -31,6 +44,14 @@ export type NoMatchReason =
   | "action_unavailable"
   | "ambiguous";
 
+export const MERGE_WORDS = ["merge", "ship"] as const;
+
+export type MergeWord = (typeof MERGE_WORDS)[number];
+
+export function isMergeWord(value: unknown): value is MergeWord {
+  return typeof value === "string" && MERGE_WORDS.includes(value as MergeWord);
+}
+
 export type ClientDirective =
   | { type: "select"; id: ItemId }
   | { type: "move"; delta: 1 | -1 }
@@ -38,18 +59,31 @@ export type ClientDirective =
   | { type: "open"; id: ItemId }
   | { type: "none" };
 
-// Pure session state carried between Utterances (card 26).
+// Pure per-client session state carried between utterances or typed intents (card 26).
 export interface VoiceSession {
   pendingConfirm?: {
     itemId: ItemId;
     actionId: string;
     label: string;
     armedAt: string;
+    intentId?: string;
+    payload?: unknown;
   };
-  dictating?: { itemId: ItemId; actionId: string; pendingBody?: string };
+  pendingDispatch?: {
+    intentId: string;
+    orchestrator: string;
+    instruction: string;
+    armedAt: string;
+  };
+  dictating?: {
+    itemId: ItemId;
+    actionId: string;
+    pendingBody?: string;
+    intentId?: string;
+  };
 }
 
-// What POST /voice/utterance returns (card 28).
+// What the stateful voice and typed-intent routes return (card 28).
 export interface VoiceResult {
   ok: boolean;
   readback: string;

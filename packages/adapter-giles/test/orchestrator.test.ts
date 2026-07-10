@@ -192,6 +192,7 @@ describe("direction OUT: inbox writes", () => {
       orchestrator.runAction("orchestrator:giles:numbat-tracing-g3", "ship", {
         intentId: "b1e6-ship-01",
         text: "looks good, ship it",
+        mergeWord: "ship",
       });
 
     const first = await run();
@@ -212,6 +213,22 @@ describe("direction OUT: inbox writes", () => {
     expect(await readdir(join(home, "state/aspex-inbox"))).toEqual([
       "b1e6-ship-01.json",
     ]);
+  });
+
+  test("refuses ship without an explicit merge word", async () => {
+    await orchestrator.poll(ctx);
+
+    const result = await orchestrator.runAction(
+      "orchestrator:giles:numbat-tracing-g3",
+      "ship",
+      { intentId: "b1e6-ship-02" },
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      message: "Ship requires merge or ship confirmation",
+    });
+    expect(existsSync(join(home, "state/aspex-inbox"))).toBe(false);
   });
 
   test("rejects intentIds that are not filename-safe", async () => {

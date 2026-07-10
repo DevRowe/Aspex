@@ -3,10 +3,12 @@ import {
   type ActionResult,
   type ClientDirective,
   type Intent,
+  type IntentAck,
   type IntentCandidate,
   type IntentSource,
   type ItemId,
   type NoMatchReason,
+  type StatusReport,
   type Transcript,
   type VoiceContext,
   type VoiceResult,
@@ -31,6 +33,18 @@ export interface GatewayDeps {
     actionId: string,
     payload?: unknown,
   ) => Promise<ActionResult>;
+  dispatchIntent?: (intent: {
+    verb: "dispatch";
+    intentId: string;
+    orchestrator: string;
+    instruction: string;
+    confirmed: true;
+  }) => Promise<IntentAck>;
+  queryIntent?: (intent: {
+    verb: "status_query";
+    intentId: string;
+    scope: "needs_me";
+  }) => Promise<StatusReport>;
   getSelectedActions: (id: ItemId) => Action[];
   resolveProject: (name: string) => ItemId | "ambiguous" | null;
   snapshotNeedsMe: () => ItemId[];
@@ -41,6 +55,7 @@ export interface GatewayDeps {
   intentService?: IntentService;
   snapshotCandidates?: () => IntentCandidate[];
   elevateFreeformConfirm?: boolean;
+  maxClientSessions?: number;
 }
 
 interface EffectResult {
@@ -49,40 +64,101 @@ interface EffectResult {
   directive?: ClientDirective;
 }
 
-export class VoiceGateway {
-  private session: VoiceSession = {};
+interface ClientSession {
+  session: VoiceSession;
+  usedAt: number;
+  generation: number;
+  result?: VoiceGatewayResult;
+  inFlight?: Promise<VoiceGatewayResult>;
+}
 
-  constructor(private deps: GatewayDeps) {}
+type SessionRequest =
+  | { kind: "new"; session: VoiceSession }
+  | { kind: "replay"; result: Promise<VoiceGatewayResult> };
+
+export class VoiceGateway {
+  private sessions = new Map<string, ClientSession>();
+  private readonly maxClientSessions: number;
+
+  constructor(private deps: GatewayDeps) {
+    this.maxClientSessions = Math.max(
+      1,
+      Math.floor(deps.maxClientSessions ?? 256),
+    );
+  }
 
   async handle(
     audio: Uint8Array,
     mime: string,
     context: VoiceContext,
+    intentId?: string,
+    clientSessionId = "direct",
+    generation = 0,
   ): Promise<VoiceGatewayResult> {
-    let transcript: Transcript;
-    try {
-      transcript = await this.deps.stt.transcribe(audio, mime);
-    } catch {
-      return this.withAudio({
-        ok: false,
-        readback: "I couldn't hear that.",
-        session: this.session,
-      });
-    }
+    return this.handleRequest(clientSessionId, generation, async (session) => {
+      let transcript: Transcript;
+      try {
+        transcript = await this.deps.stt.transcribe(audio, mime);
+      } catch {
+        if (!this.isRequestCurrent(clientSessionId, generation)) {
+          return this.cancelledResult();
+        }
+        return this.withAudio({
+          ok: false,
+          readback: "I couldn't hear that.",
+          session,
+        });
+      }
 
-    return this.runPipeline(transcript, context);
+      return this.runPipeline(
+        transcript,
+        context,
+        session,
+        intentId,
+        clientSessionId,
+        generation,
+      );
+    });
   }
 
   async handleText(
     text: string,
     context: VoiceContext,
+    intentId?: string,
+    clientSessionId = "direct",
+    generation = 0,
   ): Promise<VoiceGatewayResult> {
-    return this.runPipeline({ text, confidence: 1 }, context);
+    return this.handleRequest(clientSessionId, generation, (session) =>
+      this.runPipeline(
+        { text, confidence: 1 },
+        context,
+        session,
+        intentId,
+        clientSessionId,
+        generation,
+      ),
+    );
+  }
+
+  async cancel(
+    clientSessionId = "direct",
+    generation = 0,
+  ): Promise<VoiceGatewayResult> {
+    return this.handleRequest(clientSessionId, generation, async () => {
+      if (!this.commitSession(clientSessionId, generation, {})) {
+        return this.cancelledResult();
+      }
+      return this.cancelledResult();
+    });
   }
 
   private async runPipeline(
     transcript: Transcript,
     context: VoiceContext,
+    session: VoiceSession,
+    intentId?: string,
+    clientSessionId = "direct",
+    generation = 0,
   ): Promise<VoiceGatewayResult> {
     let provenance: IntentSource = "grammar";
     const selectedActions =
@@ -93,10 +169,11 @@ export class VoiceGateway {
     let intent = parse({
       transcript,
       context,
-      session: this.session,
+      session,
       selectedActions,
       resolveProject: this.deps.resolveProject,
       confidenceThreshold: this.deps.confidenceThreshold,
+      ...(intentId !== undefined ? { intentId } : {}),
     });
 
     if (
@@ -110,14 +187,17 @@ export class VoiceGateway {
         context,
         candidates: this.deps.snapshotCandidates(),
       });
-      intent = isIntentResult(result)
-        ? result.intent
-        : freeformNoMatch(transcript.text);
+      intent = withFreeformIntentId(
+        isIntentResult(result)
+          ? result.intent
+          : freeformNoMatch(transcript.text),
+        intentId,
+      );
       provenance = "freeform";
     }
 
-    const { next, effect } = reduce(this.session, intent, {
-      now: this.deps.now?.() ?? Date.now(),
+    const { next, effect } = reduce(session, intent, {
+      now: this.now(),
       confirmTtlMs: this.deps.confirmTtlMs,
       requiresConfirmation: (itemId, actionId) =>
         this.actionFor(itemId, actionId)?.requiresConfirmation === true ||
@@ -127,10 +207,158 @@ export class VoiceGateway {
         this.actionFor(itemId, actionId)?.label ?? actionId,
     });
 
-    this.session = next;
+    if (!this.commitSession(clientSessionId, generation, next)) {
+      return this.cancelledResult();
+    }
 
     const effectResult = await this.performEffect(effect, intent, provenance);
-    return this.withAudio({ ...effectResult, session: this.session });
+    return this.withAudio({ ...effectResult, session: cloneSession(next) });
+  }
+
+  private handleRequest(
+    clientSessionId: string,
+    generation: number,
+    run: (session: VoiceSession) => Promise<VoiceGatewayResult>,
+  ): Promise<VoiceGatewayResult> {
+    const request = this.sessionForRequest(clientSessionId, generation);
+    if (request === undefined) {
+      return this.cancelledResult();
+    }
+    if (request.kind === "replay") {
+      return request.result.then(cloneGatewayResult);
+    }
+
+    const result = run(request.session);
+    if (generation > 0) {
+      this.trackRequest(clientSessionId, generation, result);
+    }
+    return result;
+  }
+
+  private sessionForRequest(
+    clientSessionId: string,
+    generation: number,
+  ): SessionRequest | undefined {
+    this.pruneSessions();
+    const current = this.sessions.get(clientSessionId);
+    if (current === undefined) {
+      this.storeSession(clientSessionId, {
+        session: {},
+        generation,
+        usedAt: this.now(),
+      });
+      return { kind: "new", session: {} };
+    }
+    if (generation < current.generation) {
+      return undefined;
+    }
+    if (generation > 0 && generation === current.generation) {
+      current.usedAt = this.now();
+      this.storeSession(clientSessionId, current);
+      if (current.result !== undefined) {
+        return { kind: "replay", result: Promise.resolve(current.result) };
+      }
+      if (current.inFlight !== undefined) {
+        return { kind: "replay", result: current.inFlight };
+      }
+      return undefined;
+    }
+    current.generation = generation;
+    current.result = undefined;
+    current.inFlight = undefined;
+    current.usedAt = this.now();
+    this.storeSession(clientSessionId, current);
+    return { kind: "new", session: cloneSession(current.session) };
+  }
+
+  private trackRequest(
+    clientSessionId: string,
+    generation: number,
+    result: Promise<VoiceGatewayResult>,
+  ): void {
+    const current = this.sessions.get(clientSessionId);
+    if (current === undefined || current.generation !== generation) {
+      return;
+    }
+    current.inFlight = result;
+    current.usedAt = this.now();
+    this.storeSession(clientSessionId, current);
+    void result.then(
+      (completed) => {
+        const latest = this.sessions.get(clientSessionId);
+        if (
+          latest === undefined ||
+          latest.generation !== generation ||
+          latest.inFlight !== result
+        ) {
+          return;
+        }
+        latest.result = cloneGatewayResult(completed);
+        latest.inFlight = undefined;
+        latest.usedAt = this.now();
+        this.storeSession(clientSessionId, latest);
+      },
+      () => {
+        const latest = this.sessions.get(clientSessionId);
+        if (latest?.generation === generation && latest.inFlight === result) {
+          latest.inFlight = undefined;
+          latest.usedAt = this.now();
+          this.storeSession(clientSessionId, latest);
+        }
+      },
+    );
+  }
+
+  private commitSession(
+    clientSessionId: string,
+    generation: number,
+    session: VoiceSession,
+  ): boolean {
+    const current = this.sessions.get(clientSessionId);
+    if (current === undefined || current.generation !== generation) {
+      return false;
+    }
+    current.session = session;
+    current.usedAt = this.now();
+    this.storeSession(clientSessionId, current);
+    return true;
+  }
+
+  private isRequestCurrent(
+    clientSessionId: string,
+    generation: number,
+  ): boolean {
+    return this.sessions.get(clientSessionId)?.generation === generation;
+  }
+
+  private cancelledResult(): Promise<VoiceGatewayResult> {
+    return this.withAudio({ ok: true, readback: "Cancelled.", session: {} });
+  }
+
+  private pruneSessions(): void {
+    const expiry = this.now() - Math.max(this.deps.confirmTtlMs, 300_000);
+    for (const [clientSessionId, entry] of this.sessions) {
+      if (entry.usedAt < expiry) {
+        this.sessions.delete(clientSessionId);
+      }
+    }
+    while (this.sessions.size > this.maxClientSessions) {
+      const oldest = this.sessions.keys().next().value;
+      if (oldest === undefined) {
+        return;
+      }
+      this.sessions.delete(oldest);
+    }
+  }
+
+  private storeSession(clientSessionId: string, session: ClientSession): void {
+    this.sessions.delete(clientSessionId);
+    this.sessions.set(clientSessionId, session);
+    this.pruneSessions();
+  }
+
+  private now(): number {
+    return this.deps.now?.() ?? Date.now();
   }
 
   private async performEffect(
@@ -143,6 +371,14 @@ export class VoiceGateway {
     switch (effect.kind) {
       case "dispatch":
         result = await this.dispatchEffect(effect, intent);
+        break;
+
+      case "dispatchIntent":
+        result = await this.dispatchIntentEffect(effect);
+        break;
+
+      case "queryIntent":
+        result = await this.queryIntentEffect(effect);
         break;
 
       case "navigate":
@@ -168,7 +404,17 @@ export class VoiceGateway {
       case "armed":
         result = {
           ok: true,
-          readback: `Say 'confirm ${effect.actionId}' to ${effect.label} ${effect.itemId}.`,
+          readback:
+            effect.actionId === "ship"
+              ? `Say 'merge' or 'ship' to ${effect.label} ${effect.itemId}.`
+              : `Say 'confirm ${effect.actionId}' to ${effect.label} ${effect.itemId}.`,
+        };
+        break;
+
+      case "armedDispatch":
+        result = {
+          ok: true,
+          readback: `Dispatch armed: ${effect.instruction}. Say 'confirm dispatch' to send it, or 'cancel'.`,
         };
         break;
 
@@ -224,6 +470,46 @@ export class VoiceGateway {
     };
   }
 
+  private async dispatchIntentEffect(
+    effect: Extract<Effect, { kind: "dispatchIntent" }>,
+  ): Promise<EffectResult> {
+    if (this.deps.dispatchIntent === undefined) {
+      return { ok: false, readback: "Dispatch is not configured." };
+    }
+    const result = await this.deps.dispatchIntent({
+      verb: "dispatch",
+      intentId: effect.intentId,
+      orchestrator: effect.orchestrator,
+      instruction: effect.instruction,
+      confirmed: true,
+    });
+    return {
+      ok: result.ok,
+      readback:
+        result.message ??
+        (result.ok
+          ? "Dispatched. The resulting item will appear in the stream."
+          : "Dispatch failed."),
+    };
+  }
+
+  private async queryIntentEffect(
+    effect: Extract<Effect, { kind: "queryIntent" }>,
+  ): Promise<EffectResult> {
+    if (this.deps.queryIntent === undefined) {
+      return { ok: false, readback: "Status query is not configured." };
+    }
+    const result = await this.deps.queryIntent({
+      verb: "status_query",
+      intentId: effect.intentId,
+      scope: "needs_me",
+    });
+    return {
+      ok: result.ok,
+      readback: result.text,
+    };
+  }
+
   private async withAudio(result: VoiceResult): Promise<VoiceGatewayResult> {
     const bytes = await this.speak(result.readback);
     return bytes === undefined ? result : { ...result, audio: bytes };
@@ -275,6 +561,14 @@ function withConfirmed(payload: unknown): unknown {
   return { confirmed: true };
 }
 
+function cloneGatewayResult(result: VoiceGatewayResult): VoiceGatewayResult {
+  return {
+    ...result,
+    session: cloneSession(result.session),
+    ...(result.audio !== undefined ? { audio: result.audio.slice() } : {}),
+  };
+}
+
 function dictationLabel(actionId: string): string {
   return actionId === "request_changes" ? "changes" : actionId;
 }
@@ -296,6 +590,23 @@ function noMatchReadback(reason: NoMatchReason): string {
 
 function freeformNoMatch(text: string): Intent {
   return { kind: "no_match", heard: text, reason: "unknown_command" };
+}
+
+function withFreeformIntentId(
+  intent: Intent,
+  intentId: string | undefined,
+): Intent {
+  if (intentId === undefined) {
+    return intent;
+  }
+
+  switch (intent.kind) {
+    case "action":
+    case "dictate":
+      return { ...intent, intentId };
+    default:
+      return intent;
+  }
 }
 
 const isRecord = (x: unknown): x is Record<string, unknown> =>
@@ -321,6 +632,11 @@ function effectInterpretation(effect: Effect): string | undefined {
     case "dispatch":
     case "armed":
       return `${effect.actionId} ${effect.itemId}`;
+    case "dispatchIntent":
+    case "armedDispatch":
+      return `dispatch ${effect.instruction}`;
+    case "queryIntent":
+      return "query status";
     case "read":
       return `read ${effect.target}`;
     case "open":
@@ -345,4 +661,18 @@ function directiveInterpretation(directive: ClientDirective): string {
     case "none":
       return "do nothing";
   }
+}
+
+function cloneSession(session: VoiceSession): VoiceSession {
+  return {
+    ...(session.pendingConfirm !== undefined
+      ? { pendingConfirm: { ...session.pendingConfirm } }
+      : {}),
+    ...(session.pendingDispatch !== undefined
+      ? { pendingDispatch: { ...session.pendingDispatch } }
+      : {}),
+    ...(session.dictating !== undefined
+      ? { dictating: { ...session.dictating } }
+      : {}),
+  };
 }

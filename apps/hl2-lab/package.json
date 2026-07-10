@@ -1,0 +1,22 @@
+{
+  "name": "@aspex/hl2-lab",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 4174",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test src",
+    "preview": "vite preview --host 0.0.0.0 --port 4174"
+  },
+  "dependencies": {
+    "@aspex/schema": "workspace:*",
+    "three": "^0.179.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.179.0",
+    "@types/webxr": "^0.5.22",
+    "typescript": "^5.5.0",
+    "vite": "^5.4.21"
+  }
+}

@@ -1,17 +1,28 @@
+import { randomUUID } from "node:crypto";
+import { isMergeWord } from "@aspex/schema";
 import type {
   ClientDirective,
   Intent,
   ItemId,
+  MergeWord,
   NoMatchReason,
   VoiceSession,
 } from "@aspex/schema";
 
 export type Effect =
   | { kind: "dispatch"; itemId: ItemId; actionId: string; payload?: unknown }
+  | {
+      kind: "dispatchIntent";
+      intentId: string;
+      orchestrator: string;
+      instruction: string;
+    }
+  | { kind: "queryIntent"; intentId: string }
   | { kind: "navigate"; directive: ClientDirective }
   | { kind: "read"; target: ItemId }
   | { kind: "open"; target: ItemId }
   | { kind: "armed"; itemId: ItemId; actionId: string; label: string }
+  | { kind: "armedDispatch"; instruction: string }
   | { kind: "dictation_prompt"; itemId: ItemId; actionId: string }
   | {
       kind: "dictation_readback";
@@ -26,6 +37,7 @@ export type Effect =
 export interface ReduceMeta {
   now: number;
   confirmTtlMs: number;
+  randomUuid?: () => string;
   requiresConfirmation: (itemId: ItemId, actionId: string) => boolean;
   actionLabel: (itemId: ItemId, actionId: string) => string;
 }
@@ -46,10 +58,16 @@ export function reduce(
           actionId: intent.actionId,
           label,
           armedAt: new Date(meta.now).toISOString(),
+          ...(intent.intentId !== undefined
+            ? { intentId: intent.intentId }
+            : {}),
         };
 
         return {
-          next: { ...withoutPendingConfirm(current), pendingConfirm },
+          next: {
+            ...withoutPendingDispatch(withoutPendingConfirm(current)),
+            pendingConfirm,
+          },
           effect: {
             kind: "armed",
             itemId: intent.itemId,
@@ -60,11 +78,14 @@ export function reduce(
       }
 
       return {
-        next: withoutPendingConfirm(current),
+        next: withoutPendingDispatch(withoutPendingConfirm(current)),
         effect: {
           kind: "dispatch",
           itemId: intent.itemId,
           actionId: intent.actionId,
+          ...(intent.intentId !== undefined
+            ? { payload: { intentId: intent.intentId } }
+            : {}),
         },
       };
     }
@@ -74,14 +95,17 @@ export function reduce(
       if (
         pending !== undefined &&
         pending.itemId === intent.itemId &&
-        pending.actionId === intent.actionId
+        pending.actionId === intent.actionId &&
+        (pending.actionId !== "ship" || isMergeWord(intent.mergeWord))
       ) {
+        const payload = confirmationPayload(pending, intent.mergeWord);
         return {
           next: withoutPendingConfirm(current),
           effect: {
             kind: "dispatch",
             itemId: intent.itemId,
             actionId: intent.actionId,
+            ...(payload !== undefined ? { payload } : {}),
           },
         };
       }
@@ -95,8 +119,14 @@ export function reduce(
     case "dictate":
       return {
         next: {
-          ...withoutPendingConfirm(current),
-          dictating: { itemId: intent.itemId, actionId: intent.actionId },
+          ...withoutPendingDispatch(withoutPendingConfirm(current)),
+          dictating: {
+            itemId: intent.itemId,
+            actionId: intent.actionId,
+            ...(intent.intentId !== undefined
+              ? { intentId: intent.intentId }
+              : {}),
+          },
         },
         effect: {
           kind: "dictation_prompt",
@@ -137,35 +167,113 @@ export function reduce(
         };
       }
 
+      const payload = dictationPayload(
+        dictating.actionId,
+        dictating.pendingBody,
+        dictating.intentId,
+      );
+      if (meta.requiresConfirmation(dictating.itemId, dictating.actionId)) {
+        const label = meta.actionLabel(dictating.itemId, dictating.actionId);
+        return {
+          next: {
+            pendingConfirm: {
+              itemId: dictating.itemId,
+              actionId: dictating.actionId,
+              label,
+              armedAt: new Date(meta.now).toISOString(),
+              payload,
+              ...(dictating.intentId !== undefined
+                ? { intentId: dictating.intentId }
+                : {}),
+            },
+          },
+          effect: {
+            kind: "armed",
+            itemId: dictating.itemId,
+            actionId: dictating.actionId,
+            label,
+          },
+        };
+      }
       return {
-        next: withoutPendingConfirm(withoutDictating(current)),
+        next: withoutPendingDispatch(
+          withoutPendingConfirm(withoutDictating(current)),
+        ),
         effect: {
           kind: "dispatch",
           itemId: dictating.itemId,
           actionId: dictating.actionId,
-          payload: { body: dictating.pendingBody },
+          payload,
         },
       };
     }
+
+    case "dispatch_task": {
+      const intentId =
+        intent.intentId ?? fallbackIntentId(meta.now, meta.randomUuid);
+      return {
+        next: {
+          pendingDispatch: {
+            intentId,
+            orchestrator: intent.orchestrator,
+            instruction: intent.instruction,
+            armedAt: new Date(meta.now).toISOString(),
+          },
+        },
+        effect: { kind: "armedDispatch", instruction: intent.instruction },
+      };
+    }
+
+    case "confirm_dispatch": {
+      const pending = current.pendingDispatch;
+      if (
+        pending !== undefined &&
+        (intent.intentId === undefined || intent.intentId === pending.intentId)
+      ) {
+        return {
+          next: withoutPendingDispatch(current),
+          effect: {
+            kind: "dispatchIntent",
+            intentId: pending.intentId,
+            orchestrator: pending.orchestrator,
+            instruction: pending.instruction,
+          },
+        };
+      }
+      return {
+        next: withoutPendingDispatch(current),
+        effect: { kind: "noMatch", reason: "unknown_command" },
+      };
+    }
+
+    case "status_query":
+      return {
+        next: withoutPendingDispatch(withoutPendingConfirm(current)),
+        effect: {
+          kind: "queryIntent",
+          intentId:
+            intent.intentId ?? fallbackIntentId(meta.now, meta.randomUuid),
+        },
+      };
 
     case "cancel":
       return { next: {}, effect: { kind: "cancelled" } };
 
     case "nav":
       return {
-        next: withoutPendingConfirm(current),
+        next: withoutPendingDispatch(withoutPendingConfirm(current)),
         effect: { kind: "navigate", directive: intent.directive },
       };
 
     case "read":
       return {
-        next: withoutPendingConfirm(current),
+        next: withoutPendingDispatch(withoutPendingConfirm(current)),
         effect: { kind: "read", target: intent.target },
       };
 
     case "open":
       return {
-        next: withoutPendingConfirm(current),
+        next: withoutPendingDispatch(withoutPendingConfirm(current)),
         effect: { kind: "open", target: intent.target },
       };
 
@@ -185,16 +293,22 @@ function clearExpiredPendingConfirm(
   session: VoiceSession,
   meta: ReduceMeta,
 ): VoiceSession {
-  const pending = session.pendingConfirm;
-  if (pending === undefined) {
-    return cloneSession(session);
+  let current = cloneSession(session);
+  const pending = current.pendingConfirm;
+  if (
+    pending !== undefined &&
+    meta.now - Date.parse(pending.armedAt) > meta.confirmTtlMs
+  ) {
+    current = withoutPendingConfirm(current);
   }
-
-  if (meta.now - Date.parse(pending.armedAt) > meta.confirmTtlMs) {
-    return withoutPendingConfirm(session);
+  const pendingDispatch = current.pendingDispatch;
+  if (
+    pendingDispatch !== undefined &&
+    meta.now - Date.parse(pendingDispatch.armedAt) > meta.confirmTtlMs
+  ) {
+    current = withoutPendingDispatch(current);
   }
-
-  return cloneSession(session);
+  return current;
 }
 
 function cloneSession(session: VoiceSession): VoiceSession {
@@ -205,6 +319,9 @@ function cloneSession(session: VoiceSession): VoiceSession {
   if (session.dictating !== undefined) {
     next.dictating = { ...session.dictating };
   }
+  if (session.pendingDispatch !== undefined) {
+    next.pendingDispatch = { ...session.pendingDispatch };
+  }
   return next;
 }
 
@@ -213,6 +330,9 @@ function withoutPendingConfirm(session: VoiceSession): VoiceSession {
   const next: VoiceSession = { ...rest };
   if (session.dictating !== undefined) {
     next.dictating = { ...session.dictating };
+  }
+  if (session.pendingDispatch !== undefined) {
+    next.pendingDispatch = { ...session.pendingDispatch };
   }
   return next;
 }
@@ -223,5 +343,53 @@ function withoutDictating(session: VoiceSession): VoiceSession {
   if (session.pendingConfirm !== undefined) {
     next.pendingConfirm = { ...session.pendingConfirm };
   }
+  if (session.pendingDispatch !== undefined) {
+    next.pendingDispatch = { ...session.pendingDispatch };
+  }
   return next;
+}
+
+function withoutPendingDispatch(session: VoiceSession): VoiceSession {
+  const { pendingDispatch: _pendingDispatch, ...rest } = session;
+  return cloneSession(rest);
+}
+
+function dictationPayload(
+  actionId: string,
+  body: string,
+  intentId: string | undefined,
+): Record<string, unknown> {
+  const textVerbs = new Set(["answer", "redirect", "deny"]);
+  return {
+    [textVerbs.has(actionId) ? "text" : "body"]: body,
+    ...(intentId !== undefined ? { intentId } : {}),
+  };
+}
+
+function confirmationPayload(
+  pending: NonNullable<VoiceSession["pendingConfirm"]>,
+  mergeWord: MergeWord | undefined,
+): Record<string, unknown> | undefined {
+  const payload: Record<string, unknown> =
+    pending.payload !== undefined && isRecord(pending.payload)
+      ? { ...pending.payload }
+      : pending.intentId !== undefined
+        ? { intentId: pending.intentId }
+        : {};
+
+  if (mergeWord !== undefined) {
+    payload.mergeWord = mergeWord;
+  }
+
+  return Object.keys(payload).length === 0 ? undefined : payload;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+function fallbackIntentId(
+  now: number,
+  randomUuid: () => string = randomUUID,
+): string {
+  return `voice-${now.toString(36)}-${randomUuid()}`;
 }

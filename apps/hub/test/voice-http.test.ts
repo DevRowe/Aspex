@@ -9,6 +9,10 @@ const context: VoiceContext = {
   selectedId: "github:pr:brocorp/aspex#28",
   needsMeIds: ["github:pr:brocorp/aspex#28"],
 };
+const voiceHeaders = {
+  "x-aspex-voice-session": "voice-http-test-1",
+  "x-aspex-voice-generation": "1",
+};
 
 describe("hub HTTP voice routes", () => {
   test("POST /voice/utterance returns audioUrl and cached WAV bytes", async () => {
@@ -28,6 +32,7 @@ describe("hub HTTP voice routes", () => {
     const response = await app.fetch(
       new Request("http://hub.test/voice/utterance", {
         method: "POST",
+        headers: voiceHeaders,
         body: utteranceForm(),
       }),
     );
@@ -71,6 +76,7 @@ describe("hub HTTP voice routes", () => {
     const response = await app.fetch(
       new Request("http://hub.test/voice/utterance", {
         method: "POST",
+        headers: voiceHeaders,
         body: utteranceForm(),
       }),
     );
@@ -94,6 +100,7 @@ describe("hub HTTP voice routes", () => {
     const response = await app.fetch(
       new Request("http://hub.test/voice/utterance", {
         method: "POST",
+        headers: voiceHeaders,
         body: form,
       }),
     );
@@ -110,6 +117,7 @@ describe("hub HTTP voice routes", () => {
     const response = await app.fetch(
       new Request("http://hub.test/voice/utterance", {
         method: "POST",
+        headers: voiceHeaders,
         body: utteranceForm({ contextJson: JSON.stringify({ selectedId: 1 }) }),
       }),
     );
@@ -128,6 +136,7 @@ describe("hub HTTP voice routes", () => {
     const response = await app.fetch(
       new Request("http://hub.test/voice/utterance", {
         method: "POST",
+        headers: voiceHeaders,
         body: form,
       }),
     );
@@ -142,6 +151,7 @@ describe("hub HTTP voice routes", () => {
     const response = await app.fetch(
       new Request("http://hub.test/voice/utterance", {
         method: "POST",
+        headers: voiceHeaders,
         body: utteranceForm(),
       }),
     );
@@ -192,6 +202,80 @@ describe("hub HTTP voice routes", () => {
       enabled: true,
       pttKey: "KeyV",
     });
+  });
+
+  test("passes a filename-safe client intent id to the voice gateway", async () => {
+    let receivedIntentId: string | undefined;
+    let receivedSessionId: string | undefined;
+    let receivedGeneration: number | undefined;
+    const gateway = {
+      handle: async (
+        _audio: Uint8Array,
+        _mime: string,
+        _context: VoiceContext,
+        intentId?: string,
+        clientSessionId?: string,
+        generation?: number,
+      ) => {
+        receivedIntentId = intentId;
+        receivedSessionId = clientSessionId;
+        receivedGeneration = generation;
+        return voiceResult();
+      },
+    } as unknown as VoiceGateway;
+    const form = utteranceForm();
+    form.set("intentId", "hl2-voice-1");
+    const { app } = openServer({ voiceGateway: gateway });
+    const response = await app.fetch(
+      new Request("http://hub.test/voice/utterance", {
+        method: "POST",
+        headers: voiceHeaders,
+        body: form,
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(receivedIntentId).toBe("hl2-voice-1");
+    expect(receivedSessionId).toBe("voice-http-test-1");
+    expect(receivedGeneration).toBe(1);
+  });
+
+  test("rejects voice requests without a client session", async () => {
+    const { app } = openServer({
+      voiceGateway: fakeGateway(async () => voiceResult()),
+    });
+    const response = await app.fetch(
+      new Request("http://hub.test/voice/utterance", {
+        method: "POST",
+        body: utteranceForm(),
+      }),
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ message: "Invalid voice session" });
+  });
+
+  test("POST /voice/cancel clears a server-side arm without dispatching", async () => {
+    let cancels = 0;
+    let receivedSessionId: string | undefined;
+    let receivedGeneration: number | undefined;
+    const gateway = {
+      cancel: async (clientSessionId?: string, generation?: number) => {
+        cancels += 1;
+        receivedSessionId = clientSessionId;
+        receivedGeneration = generation;
+        return voiceResult();
+      },
+    } as unknown as VoiceGateway;
+    const { app } = openServer({ voiceGateway: gateway });
+    const response = await app.fetch(
+      new Request("http://hub.test/voice/cancel", {
+        method: "POST",
+        headers: voiceHeaders,
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(cancels).toBe(1);
+    expect(receivedSessionId).toBe("voice-http-test-1");
+    expect(receivedGeneration).toBe(1);
   });
 });
 

@@ -63,6 +63,7 @@ export async function runAction(
   itemId: string,
   actionId: string,
   confirmed = false,
+  payload?: Record<string, unknown>,
 ): Promise<ActionResult> {
   const hub = await getHubUrl();
   const response = await hubFetch(
@@ -72,7 +73,10 @@ export async function runAction(
     {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ confirmed }),
+      body: JSON.stringify({
+        confirmed,
+        ...(payload === undefined ? {} : { payload }),
+      }),
     },
   );
   const body = (await response

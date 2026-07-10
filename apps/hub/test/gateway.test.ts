@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { Action, ActionResult, ItemId } from "@aspex/schema";
+import type { Action, ActionResult, ItemId, Transcript } from "@aspex/schema";
 import { type GatewayDeps, VoiceGateway } from "../src/voice/gateway";
 import { MockSttClient, type SttClient } from "../src/voice/sttClient";
 import { MockTtsClient, type TtsClient } from "../src/voice/ttsClient";
@@ -24,6 +24,8 @@ function makeGateway(
       action("merge", { label: "Merge", requiresConfirmation: true }),
       action("comment"),
       action("request_changes"),
+      action("redirect", { label: "Redirect", requiresConfirmation: true }),
+      action("ship", { label: "Review & ship", requiresConfirmation: true }),
     ],
     resolveProject: () => null,
     snapshotNeedsMe: () => [itemId, secondId],
@@ -96,6 +98,164 @@ describe("VoiceGateway", () => {
       readback: "Cancelled.",
       session: {},
     });
+    expect(dispatchAction).not.toHaveBeenCalled();
+  });
+
+  test("keeps voice sessions isolated when cancelling one client", async () => {
+    const { gateway, dispatchAction } = makeGateway([
+      "merge",
+      "merge",
+      "confirm merge",
+    ]);
+    const context = { selectedId: itemId, needsMeIds: [itemId] };
+
+    await gateway.handle(audio, "audio/webm", context, undefined, "client-a");
+    await gateway.handle(audio, "audio/webm", context, undefined, "client-b");
+    await gateway.cancel("client-a");
+    const confirmed = await gateway.handle(
+      audio,
+      "audio/webm",
+      context,
+      undefined,
+      "client-b",
+    );
+
+    expect(confirmed.ok).toBe(true);
+    expect(dispatchAction).toHaveBeenCalledWith(itemId, "merge", {
+      confirmed: true,
+    });
+  });
+
+  test("evicts the least recently used voice session at capacity", async () => {
+    const { gateway, dispatchAction } = makeGateway(
+      ["merge", "merge", "merge", "confirm merge", "confirm merge"],
+      { maxClientSessions: 2 },
+    );
+    const context = { selectedId: itemId, needsMeIds: [itemId] };
+
+    await gateway.handle(audio, "audio/webm", context, undefined, "client-a");
+    await gateway.handle(audio, "audio/webm", context, undefined, "client-b");
+    await gateway.handle(audio, "audio/webm", context, undefined, "client-c");
+    await gateway.handle(audio, "audio/webm", context, undefined, "client-a");
+    await gateway.handle(audio, "audio/webm", context, undefined, "client-c");
+
+    expect(dispatchAction).toHaveBeenCalledTimes(1);
+    expect(dispatchAction).toHaveBeenCalledWith(itemId, "merge", {
+      confirmed: true,
+    });
+  });
+
+  test("does not restore a cancelled session when transcription finishes late", async () => {
+    let completeTranscription: (transcript: Transcript) => void;
+    const transcription = new Promise<Transcript>((resolve) => {
+      completeTranscription = resolve;
+    });
+    const stt: SttClient = {
+      transcribe: () => transcription,
+    };
+    const { gateway, dispatchAction } = makeGateway([], { stt });
+    const context = { selectedId: itemId, needsMeIds: [itemId] };
+
+    const pending = gateway.handle(
+      audio,
+      "audio/webm",
+      context,
+      undefined,
+      "client-race",
+      1,
+    );
+    await gateway.cancel("client-race", 2);
+    completeTranscription({ text: "merge", confidence: 1 });
+
+    expect(await pending).toMatchObject({
+      ok: true,
+      readback: "Cancelled.",
+      session: {},
+    });
+    const followUp = await gateway.handleText(
+      "confirm merge",
+      context,
+      undefined,
+      "client-race",
+      3,
+    );
+    expect(followUp.session).toEqual({});
+    expect(dispatchAction).not.toHaveBeenCalled();
+  });
+
+  test("ship requires a spoken merge word and forwards it with confirmation", async () => {
+    const { gateway, dispatchAction } = makeGateway(["ship", "merge"]);
+    const context = { selectedId: itemId, needsMeIds: [itemId] };
+
+    const armed = await gateway.handle(audio, "audio/webm", context);
+    const confirmed = await gateway.handle(audio, "audio/webm", context);
+
+    expect(armed.session.pendingConfirm?.actionId).toBe("ship");
+    expect(dispatchAction).toHaveBeenCalledWith(itemId, "ship", {
+      mergeWord: "merge",
+      confirmed: true,
+    });
+    expect(confirmed.session).toEqual({});
+  });
+
+  test("replays a ship generation without treating it as confirmation", async () => {
+    const { gateway, dispatchAction } = makeGateway([]);
+    const context = { selectedId: itemId, needsMeIds: [itemId] };
+
+    const armed = await gateway.handleText(
+      "ship",
+      context,
+      undefined,
+      "retrying-client",
+      1,
+    );
+    const replayed = await gateway.handleText(
+      "ship",
+      context,
+      undefined,
+      "retrying-client",
+      1,
+    );
+
+    expect(replayed).toEqual(armed);
+    expect(replayed.session.pendingConfirm?.actionId).toBe("ship");
+    expect(dispatchAction).not.toHaveBeenCalled();
+
+    await gateway.handleText("merge", context, undefined, "retrying-client", 2);
+    expect(dispatchAction).toHaveBeenCalledTimes(1);
+  });
+
+  test("coalesces an in-flight duplicate generation", async () => {
+    let completeTranscription: (transcript: Transcript) => void;
+    const transcription = new Promise<Transcript>((resolve) => {
+      completeTranscription = resolve;
+    });
+    const transcribe = mock(() => transcription);
+    const { gateway, dispatchAction } = makeGateway([], {
+      stt: { transcribe },
+    });
+    const context = { selectedId: itemId, needsMeIds: [itemId] };
+
+    const initial = gateway.handle(
+      audio,
+      "audio/webm",
+      context,
+      undefined,
+      "retrying-client",
+      1,
+    );
+    const replay = gateway.handle(
+      audio,
+      "audio/webm",
+      context,
+      undefined,
+      "retrying-client",
+      1,
+    );
+
+    expect(transcribe).toHaveBeenCalledTimes(1);
+    completeTranscription({ text: "ship", confidence: 1 });
+    expect(await replay).toEqual(await initial);
     expect(dispatchAction).not.toHaveBeenCalled();
   });
 
@@ -225,5 +385,58 @@ describe("VoiceGateway", () => {
     expect(nullResult.audio).toBeUndefined();
     expect(emptyResult.audio).toBeUndefined();
     expect(failedResult.audio).toBeUndefined();
+  });
+
+  test("voice dispatch arms, requires a second utterance, and reuses the client intent id", async () => {
+    const dispatchIntent = mock(async () => ({ ok: true, message: "Queued." }));
+    const { gateway } = makeGateway(
+      ["dispatch build the lab checklist", "confirm dispatch"],
+      { dispatchIntent },
+    );
+    const context = { needsMeIds: [itemId] };
+
+    const armed = await gateway.handle(
+      audio,
+      "audio/webm",
+      context,
+      "hl2-dispatch-1",
+    );
+    expect(armed.session.pendingDispatch?.intentId).toBe("hl2-dispatch-1");
+    expect(dispatchIntent).not.toHaveBeenCalled();
+    const confirmed = await gateway.handle(
+      audio,
+      "audio/webm",
+      context,
+      "hl2-confirm-2",
+    );
+    expect(dispatchIntent).toHaveBeenCalledTimes(1);
+    expect(dispatchIntent).toHaveBeenCalledWith({
+      verb: "dispatch",
+      intentId: "hl2-dispatch-1",
+      orchestrator: "giles",
+      instruction: "build the lab checklist",
+      confirmed: true,
+    });
+    expect(confirmed.session.pendingDispatch).toBeUndefined();
+  });
+
+  test("voice status query uses the existing referent-less intent route", async () => {
+    const queryIntent = mock(async () => ({
+      ok: true,
+      text: "Two things need you.",
+    }));
+    const { gateway } = makeGateway(["status query"], { queryIntent });
+    const result = await gateway.handle(
+      audio,
+      "audio/webm",
+      { needsMeIds: [] },
+      "hl2-status-1",
+    );
+    expect(queryIntent).toHaveBeenCalledWith({
+      verb: "status_query",
+      intentId: "hl2-status-1",
+      scope: "needs_me",
+    });
+    expect(result.readback).toBe("Two things need you.");
   });
 });

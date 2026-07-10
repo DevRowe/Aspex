@@ -139,6 +139,15 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
     orchestrators.ownsItem(itemId)
       ? orchestrators.actionMeta(itemId, actionId)
       : registry.actionMeta(itemId, actionId);
+  const dispatchIntent = (
+    intent: Parameters<OrchestratorRegistry["dispatch"]>[0],
+  ) => orchestrators.dispatch(intent);
+  const queryIntent = async (
+    intent: Parameters<OrchestratorRegistry["query"]>[0],
+  ) =>
+    intent.scope === undefined || intent.scope === "needs_me"
+      ? { ok: true, text: needsMeText(world, cfg.needsMeCap) }
+      : orchestrators.query(intent);
 
   const intentService =
     cfg.intent?.enabled === true
@@ -169,6 +178,8 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
                     })
                   : null,
           dispatchAction,
+          dispatchIntent,
+          queryIntent,
           getSelectedActions: (id) =>
             world.snapshot().find((item) => item.id === id)?.actions ?? [],
           resolveProject: (name) =>
@@ -204,11 +215,8 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
     // world-model (fast, no orchestrator round-trip); a single-item scope
     // defers to the owning orchestrator for freshness.
     intents: {
-      dispatch: (intent) => orchestrators.dispatch(intent),
-      query: async (intent) =>
-        intent.scope === undefined || intent.scope === "needs_me"
-          ? { ok: true, text: needsMeText(world, cfg.needsMeCap) }
-          : orchestrators.query(intent),
+      dispatch: dispatchIntent,
+      query: queryIntent,
     },
     intentLedger: new IntentLedger(),
     voiceGateway,
