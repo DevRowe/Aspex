@@ -2,9 +2,9 @@
 
 This document describes the security stance as shipped through Phase 3 and the
 orchestrator protocol core. It is scoped to the local Hub, web cockpit, desktop
-shell, Phase 0 adapters, the Phase 1 flat voice loop, the Phase 2 Preview Deck,
-Phase 3 free-form intent plus observe-only agent adapters, and the Hub-side
-orchestrator direction channel.
+shell, Phase 0 adapters, the Phase 1 flat voice loop, the isolated HoloLens 2
+WebXR lab, the Phase 2 Preview Deck, Phase 3 free-form intent plus observe-only
+agent adapters, and the Hub-side orchestrator direction channel.
 
 ## Security Goals
 
@@ -105,14 +105,16 @@ The cockpit must not look current when it is not. Polled sources use poll health
 for liveness. Push sources use heartbeat freshness. Terminal states do not
 decay. This follows ADR-0003.
 
-## Voice (Phase 1)
+## Voice (Phase 1) and the HL2 lab
 
-Voice is opt-in and flat only. There is no Phase 1 headset, spatial, or WebXR
-voice path.
+Voice is opt-in and the supported product surface is flat only.
+The HoloLens 2 WebXR client is an unsupported lab instrument that reuses the
+same Hub voice path; it does not make a headset product surface supported or
+claim that the physical microphone gate has passed.
 
 The web client captures audio only while Push-to-talk is held. There is no open
 mic and no wake word. Each press creates one Utterance and sends browser
-`MediaRecorder` audio plus Voice context to the local Hub.
+`MediaRecorder` audio plus Voice context to the configured Hub.
 
 Audio and transcripts are data, never code. The Hub uses transcript text only as
 a server-side Command grammar lookup or as a literal body in Dictation mode. It
@@ -123,6 +125,13 @@ trigger or confirm an action by itself. No-match never acts. Actions marked
 `requiresConfirmation` arm first and require a separate Confirm-phrase. Dictated
 free text is accepted only after a dictation command, is read back, and is
 posted only after `post it` or `send it`.
+
+Every stateful voice or typed-intent request carries a filename-safe client
+session id and a strictly increasing generation.
+The Hub isolates pending state by session, replays an exact retry, and rejects
+an older generation as cancelled without state advancement.
+This prevents a delayed or retried request from confirming or dictating through
+another client session.
 
 Voice service traffic is local-first. The Hub binds loopback by default; when
 real STT/TTS are enabled it calls configured local or tailnet HTTP services
@@ -260,8 +269,9 @@ stay retryable.
 
 ## Future Labs Isolation
 
-Spatial panels, delegation depth, WebXR voice entry checks, and the untrusted
-Preview pixels lane remain future Labs work. Preview Deck's shipped Phase 2
-security boundary is described above and in `docs/preview-deck.md`; the forward
-plan for later spatial and arbitrary-app surfaces remains in
-`docs/build/90-later-phases-outline.md`.
+The HL2 lab is deliberately isolated from product clients and remains without
+physical-device verification; spatial product panels, delegation depth, and the
+untrusted Preview pixels lane remain future Labs work.
+Preview Deck's shipped Phase 2 security boundary is described above and in
+`docs/preview-deck.md`; the forward plan for later spatial and arbitrary-app
+surfaces remains in `docs/build/90-later-phases-outline.md`.

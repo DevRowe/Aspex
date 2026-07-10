@@ -5,7 +5,10 @@ and server-side: the web client records one Utterance, sends audio plus Voice
 context to the Hub, and the Hub performs STT, command grammar parsing, session
 reduction, action dispatch, and read-back.
 
-There is no spatial or WebXR voice behavior in Phase 1.
+The supported product surface remains flat; the isolated HoloLens 2 WebXR lab
+reuses this grammar and protocol solely as a hardware design instrument.
+It does not make a spatial client a supported product surface or satisfy the
+physical WebXR microphone verification gate.
 
 ## Safe-Grammar Rules
 
@@ -32,7 +35,7 @@ transcript below `voice.confidenceThreshold` becomes `low_confidence`.
 
 ## Voice Context and Referents
 
-Every Utterance carries:
+Every Utterance and typed intent carries:
 
 ```ts
 {
@@ -75,13 +78,13 @@ Phase 1 does not ship ordinal referents such as `the top one` or `the second`.
 | `redirect` | `dictate` with `actionId: "redirect"` | Dictates text and then arms when the live Action requires confirmation. |
 | `ship` / `review and ship` | `action` with `actionId: "ship"` | Arms when the live Action requires confirmation; it never merges from this utterance alone. |
 | `dispatch <instruction>` | referent-less `dispatch_task` | Always arms and requires a separate `confirm dispatch`; the resulting Item arrives through the world-model stream. |
-| `status` / `status query` | referent-less `status_query` | Calls the existing `/intents` status-query handler and returns its read-back. |
+| `status` / `status query` | referent-less `status_query` | Uses the same Hub status-query behavior as `/intents` and returns its read-back. |
 | `re-run` | `action` with `actionId: "rerun"` | Dispatches unless the Item action requires confirmation. |
 | `re-run checks` | `action` with `actionId: "rerun"` | Same as above. |
 | `merge` | `action` with `actionId: "merge"` | Arms if `requiresConfirmation` is true. |
 | `confirm <verb>` | `confirm` pending action | Only works when `<verb>` maps to the current pending action, including orchestrator verbs offered by the selected Item. |
 | `confirm dispatch` | `confirm_dispatch` | Delivers only the currently armed dispatch and reuses its original client `intentId`. |
-| `cancel` | `cancel` | Clears pending confirmation or Dictation mode. |
+| `cancel` | `cancel` | Clears pending confirmation, an armed dispatch, or Dictation mode. |
 | `never mind` | `cancel` | Same as above. |
 | `comment` | `dictate` with `actionId: "comment"` | Enters Dictation mode. |
 | `request changes` | `dictate` with `actionId: "request_changes"` | Enters Dictation mode. |
@@ -119,9 +122,9 @@ The Hub forwards that captured `mergeWord` with `confirmed: true`, and the
 Giles adapter refuses a ship direction without it.
 
 The pending confirm expires after `voice.confirmTtlMs`. A recognized navigation,
-read, open, action, or dictation command clears it. A parser `no_match` leaves it
-in place. A mismatched recognized confirm returns `unknown_command` and clears
-it.
+read, open, action, dictation, or status-query command clears it. A parser
+`no_match` leaves it in place. A mismatched recognized confirm returns
+`unknown_command` and clears it.
 
 A referent-less dispatch uses a sibling `pendingDispatch` record containing the client `intentId`, orchestrator, instruction, and `armedAt` time.
 The first dispatch utterance never calls the orchestrator, while `confirm dispatch` delivers exactly that stored intent.
@@ -178,8 +181,18 @@ The web client captures audio only while the push-to-talk button or configured
 hold key is pressed. The default key is `Space`. Key capture is suppressed inside
 editable controls.
 
+Each client creates a filename-safe `X-Aspex-Voice-Session` id and sends a
+strictly increasing positive `X-Aspex-Voice-Generation` on every utterance,
+typed `/intent` request, and `/voice/cancel` request.
+An exact retry replays its original result; an older generation is cancelled
+without changing the session, so a delayed request cannot advance another
+client's confirmation or dictation state.
+A client may include an optional form `intentId` on an utterance that could
+reach a consequential action or direction intent and retain it across that
+action's confirmation sequence.
+
 The Hub always returns text read-back. If TTS succeeds, the HTTP route returns a
 short-lived `/voice/audio/<id>` URL containing cached WAV bytes; if TTS is off or
 fails, `audioUrl` is omitted and the text read-back remains authoritative.
-The web client authenticates the utterance and audio-fetch requests with the Hub
-bearer token, the same as the rest of the Hub HTTP API.
+The web client authenticates utterance, typed-intent, and audio-fetch requests
+with the Hub bearer token, the same as the rest of the Hub HTTP API.

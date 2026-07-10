@@ -129,6 +129,10 @@ It returns `VoiceResult`, the same result envelope used by
 configured, the route returns `503`.
 Like every Hub HTTP route except `POST /webhooks/cursor`, it requires
 `Authorization: Bearer <hub-token>`.
+It also requires a client-generated `X-Aspex-Voice-Session` identifier and a
+strictly increasing positive `X-Aspex-Voice-Generation`, shared with follow-up
+typed or spoken requests so the Hub retains state per client and can replay an
+exact retry without advancing it.
 
 ## References
 

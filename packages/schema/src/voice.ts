@@ -1,6 +1,6 @@
 import type { ItemId } from "./index";
 
-// Attached by the client to every Utterance so the Hub can resolve referents (ADR-0011).
+// Attached by the client to every utterance or typed intent so the Hub can resolve referents (ADR-0011).
 export interface VoiceContext {
   selectedId?: ItemId;
   needsMeIds: ItemId[];
@@ -59,7 +59,7 @@ export type ClientDirective =
   | { type: "open"; id: ItemId }
   | { type: "none" };
 
-// Pure session state carried between Utterances (card 26).
+// Pure per-client session state carried between utterances or typed intents (card 26).
 export interface VoiceSession {
   pendingConfirm?: {
     itemId: ItemId;
@@ -83,7 +83,7 @@ export interface VoiceSession {
   };
 }
 
-// What POST /voice/utterance returns (card 28).
+// What the stateful voice and typed-intent routes return (card 28).
 export interface VoiceResult {
   ok: boolean;
   readback: string;

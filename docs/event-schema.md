@@ -186,9 +186,22 @@ export type Intent =
   | { kind: "nav"; directive: ClientDirective }
   | { kind: "read"; target: ItemId }
   | { kind: "open"; target: ItemId }
-  | { kind: "action"; itemId: ItemId; actionId: string }
-  | { kind: "confirm"; itemId: ItemId; actionId: string }
-  | { kind: "dictate"; itemId: ItemId; actionId: string }
+  | { kind: "action"; itemId: ItemId; actionId: string; intentId?: string }
+  | {
+      kind: "confirm";
+      itemId: ItemId;
+      actionId: string;
+      mergeWord?: MergeWord;
+    }
+  | { kind: "dictate"; itemId: ItemId; actionId: string; intentId?: string }
+  | {
+      kind: "dispatch_task";
+      instruction: string;
+      orchestrator: string;
+      intentId?: string;
+    }
+  | { kind: "confirm_dispatch"; intentId?: string }
+  | { kind: "status_query"; intentId?: string }
   | { kind: "dictation_body"; text: string }
   | { kind: "post" }
   | { kind: "cancel" }
@@ -200,6 +213,9 @@ export type NoMatchReason =
   | "no_referent"
   | "action_unavailable"
   | "ambiguous";
+
+export const MERGE_WORDS = ["merge", "ship"] as const;
+export type MergeWord = (typeof MERGE_WORDS)[number];
 
 export type ClientDirective =
   | { type: "select"; id: ItemId }
@@ -214,11 +230,20 @@ export interface VoiceSession {
     actionId: string;
     label: string;
     armedAt: string;
+    intentId?: string;
+    payload?: unknown;
+  };
+  pendingDispatch?: {
+    intentId: string;
+    orchestrator: string;
+    instruction: string;
+    armedAt: string;
   };
   dictating?: {
     itemId: ItemId;
     actionId: string;
     pendingBody?: string;
+    intentId?: string;
   };
 }
 
@@ -231,9 +256,9 @@ export interface VoiceResult {
 }
 ```
 
-`VoiceContext` is attached by the client to every Utterance. `selectedId` is the
-current client selection, if any. `needsMeIds` is the ordered needs-me list the
-client is showing.
+`VoiceContext` is attached by the client to every Utterance and typed intent.
+`selectedId` is the current client selection, if any. `needsMeIds` is the
+ordered needs-me list the client is showing.
 
 `Transcript` is returned by the STT service contract. `confidence` is a numeric
 `0..1` score used by the Hub confidence gate.
@@ -247,8 +272,8 @@ an Item, `move` changes selection by one row in the needs-me list,
 client to open the Item's deep-link, and `none` is a no-op directive.
 
 `VoiceSession` is mirrored in responses so the client can display pending
-confirmation or Dictation mode. `pendingBody` is present after the Hub has read
-back a dictated body and before `post it`/`send it`.
+confirmation, an armed dispatch, or Dictation mode. `pendingBody` is present
+after the Hub has read back a dictated body and before `post it`/`send it`.
 
 `VoiceResult.ok` is false for no-match and gateway error read-backs. `readback`
 is always present. `audioUrl` is present only when TTS produced cached WAV bytes.
@@ -321,6 +346,7 @@ interface IntentHttpBody {
 The Hub runs the same grammar-first pipeline used by voice and returns
 `VoiceResult` JSON. The route returns `503` when free-form intent is disabled or
 the gateway is not configured. Validation failures return HTTP 400.
+It requires the stateful voice-session headers documented below.
 
 The Intent bar is the shipped typed client for this endpoint.
 
@@ -409,15 +435,19 @@ next to `confirmed` and `payload`. A retried consequential action returns the
 recorded ack instead of running twice, and the Hub threads the `intentId`
 into the payload so the owning orchestrator reuses it as the inbox filename
 (end-to-end dedupe).
+For the Giles `ship` action, a confirmed request must also set
+`payload.mergeWord` to `"merge"` or `"ship"`; the adapter rejects ship without
+that explicit word.
 
 ## `/voice/utterance`
 
 `POST /voice/utterance` accepts `multipart/form-data`:
 
 All stateful voice requests (`/voice/utterance`, `/intent`, and `/voice/cancel`)
-also require an `X-Aspex-Voice-Session` header containing a client-generated,
+require an `X-Aspex-Voice-Session` header containing a client-generated,
 filename-safe session identifier and an `X-Aspex-Voice-Generation` header
-containing a positive safe integer.
+containing a positive safe integer. The session identifier follows
+`isValidIntentId` (`/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/`).
 Generations increase monotonically within each retained session.
 The Hub replays the original response for an exact generation retry while that
 session is retained, without advancing confirmation, dispatch, or dictation
@@ -430,6 +460,7 @@ identifier.
 | --- | --- | --- |
 | `audio` | yes | File-like browser audio blob, usually `audio/webm` or `audio/wav`. |
 | `context` | yes | JSON-encoded `VoiceContext`. |
+| `intentId` | no | Filename-safe client id carried into a consequential action or referent-less direction intent for end-to-end deduplication. |
 
 The Hub returns `503 { "error": "voice not configured" }` when voice is disabled
 or no Voice gateway is configured. Missing audio, missing context, malformed
@@ -438,6 +469,10 @@ context JSON, or invalid `VoiceContext` return HTTP 400 with a `message`.
 On a valid request the HTTP route calls the Voice gateway and returns
 `VoiceResult` JSON. Gateway no-match cases still return HTTP 200 with
 `ok: false`; they are not request validation failures.
+
+`POST /voice/cancel` takes no body and uses the same two stateful-session
+headers. It clears only that session's pending confirmation, dispatch, or
+dictation state, then returns a cancelled `VoiceResult`.
 
 The gateway may produce raw TTS bytes internally. The HTTP route strips any
 gateway-supplied `audioUrl`, caches raw audio bytes in memory, and adds

@@ -15,7 +15,7 @@ bun run --cwd apps/hl2-lab dev
 
 Open `http://localhost:4174` in Chromium.
 Pair the exact Hub URL and local bearer token in Settings.
-The Hub URL is persisted for convenience, while the bearer token is kept only in tab-scoped session storage and is never rendered or logged.
+The Hub URL is persisted for convenience, while the bearer token is kept only in tab-scoped session storage, entered through a masked field, and never logged.
 The EventSource token query is constructed only in memory because browsers cannot attach authorization headers to `EventSource`.
 
 Mouse movement simulates gaze, click simulates pinch, Left/Right moves through the ranked carousel, Enter selects the focused target, and holding V simulates push-to-talk.
@@ -24,6 +24,7 @@ The same focus and select controller is fed by WebXR target rays and `selectstar
 Build the standalone gate with:
 
 ```sh
+bun run --cwd apps/hl2-lab typecheck
 bun run build:hl2-lab
 bun run test:hl2-lab
 ```
@@ -73,6 +74,9 @@ If the installed Tailscale CLI uses a newer Serve syntax, reproduce the same two
 - Walk away from Wi-Fi briefly and verify last-known cards remain visible with offline or stale labeling before reconnect.
 
 No physical HoloLens 2 verification is claimed by the initial implementation worker.
+The lab's push-to-talk client creates an in-memory voice-session id and advances
+its request generation for each utterance or cancellation so delayed deliveries
+cannot advance a prior confirmation or dictation state.
 
 ## Exit-moment demo flows
 
