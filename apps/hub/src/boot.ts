@@ -3,16 +3,19 @@ import { dirname } from "node:path";
 import { ClaudeCodeAdapter } from "@aspex/adapter-claude-code";
 import { CodexAdapter } from "@aspex/adapter-codex";
 import { CursorAdapter } from "@aspex/adapter-cursor";
+import { GilesOrchestrator } from "@aspex/adapter-giles";
 import { GithubAdapter } from "@aspex/adapter-github";
 import { MockAdapter } from "@aspex/adapter-mock";
 import { NtfyNotifier } from "@aspex/adapter-ntfy";
 import { OpenCodeAdapter } from "@aspex/adapter-opencode";
 import { WebhookAdapter } from "@aspex/adapter-webhook";
+import { OrchestratorRegistry } from "./adapters/orchestrators";
 import { AdapterRegistry } from "./adapters/registry";
 import { Bus } from "./bus";
 import { type AspexConfig, resolvedLivenessConfig } from "./config";
 import { enforceOwnership, rank } from "./engine/attention";
 import { LivenessTicker, livenessAt, nextStaleAfter } from "./engine/liveness";
+import { IntentLedger } from "./http/intentLedger";
 import { type ServerDeps, buildApp } from "./http/server";
 import { createPreviewBroker } from "./preview/broker";
 import type { PreviewEngine } from "./preview/engine";
@@ -99,9 +102,43 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
     registry.register(new CursorAdapter());
   }
 
+  // Orchestrators are a separate first-class registry: bidirectional peers
+  // that own agents, not observed sources. Off by default; the reference
+  // Giles orchestrator reads the Giles home read-only and delivers direction
+  // intents into its designated inbox.
+  const orchestrators = new OrchestratorRegistry(world, liveness);
+
+  if (cfg.orchestrators?.giles?.enabled === true) {
+    orchestrators.register(
+      new GilesOrchestrator({
+        home: cfg.orchestrators.giles.home,
+        ...(cfg.orchestrators.giles.pollIntervalMs !== undefined
+          ? { pollIntervalMs: cfg.orchestrators.giles.pollIntervalMs }
+          : {}),
+      }),
+    );
+  }
+
   if (cfg.ntfy !== undefined) {
     new NtfyNotifier(cfg.ntfy, bus);
   }
+
+  // Route actions by item source: orchestrator:* items go to the
+  // orchestrator registry, everything else to the adapter registry. Voice and
+  // HTTP share this composition so orchestrator verbs ride the existing
+  // arm/confirm stack unchanged.
+  const dispatchAction = (
+    itemId: string,
+    actionId: string,
+    payload?: unknown,
+  ) =>
+    orchestrators.ownsItem(itemId)
+      ? orchestrators.dispatchAction(itemId, actionId, payload)
+      : registry.dispatchAction(itemId, actionId, payload);
+  const actionMeta = (itemId: string, actionId: string) =>
+    orchestrators.ownsItem(itemId)
+      ? orchestrators.actionMeta(itemId, actionId)
+      : registry.actionMeta(itemId, actionId);
 
   const intentService =
     cfg.intent?.enabled === true
@@ -131,7 +168,7 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
                       timeoutMs: cfg.voice.stt.timeoutMs,
                     })
                   : null,
-          dispatchAction: registry.dispatchAction.bind(registry),
+          dispatchAction,
           getSelectedActions: (id) =>
             world.snapshot().find((item) => item.id === id)?.actions ?? [],
           resolveProject: (name) =>
@@ -160,8 +197,20 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
     cap: cfg.needsMeCap,
     version: VERSION,
     authToken: cfg.auth?.token,
-    dispatchAction: registry.dispatchAction.bind(registry),
-    actionMeta: registry.actionMeta.bind(registry),
+    corsOrigin: cfg.corsOrigin,
+    dispatchAction,
+    actionMeta,
+    // A whole-inbox status query answers from the Hub's own ranked
+    // world-model (fast, no orchestrator round-trip); a single-item scope
+    // defers to the owning orchestrator for freshness.
+    intents: {
+      dispatch: (intent) => orchestrators.dispatch(intent),
+      query: async (intent) =>
+        intent.scope === undefined || intent.scope === "needs_me"
+          ? { ok: true, text: needsMeText(world, cfg.needsMeCap) }
+          : orchestrators.query(intent),
+    },
+    intentLedger: new IntentLedger(),
     voiceGateway,
     voice: {
       enabled: cfg.voice?.enabled === true,
@@ -199,6 +248,7 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
     },
     bus,
     registry,
+    orchestrators,
     world,
     start: async () => {
       const previewDeps = await preparePreviews(cfg, {
@@ -225,6 +275,7 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
               },
       });
       await registry.startAll();
+      await orchestrators.startAll();
       liveness.start();
     },
     stop: async () => {
@@ -233,6 +284,7 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
         previewSweep = undefined;
       }
       liveness.stop();
+      await orchestrators.stopAll();
       await registry.stopAll();
       await previewBroker?.shutdown();
       db.close();
@@ -332,6 +384,19 @@ function resolveProjectId(
   );
 
   return sorted[0]?.id ?? null;
+}
+
+// Spoken/rendered "what needs me" summary from the ranked world-model.
+function needsMeText(world: WorldModel, needsMeCap: number): string {
+  const needsMe = rank(world.snapshot(), needsMeCap).needsMe;
+
+  if (needsMe.length === 0) {
+    return "Nothing needs you right now.";
+  }
+
+  const lines = needsMe.map((item) => `${item.project}: ${item.summary}`);
+
+  return `${needsMe.length} need${needsMe.length === 1 ? "s" : ""} you. ${lines.join(" | ")}`;
 }
 
 function readItem(world: WorldModel, id: string): string {

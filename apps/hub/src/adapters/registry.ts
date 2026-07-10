@@ -1,12 +1,8 @@
-import type {
-  Action,
-  ActionResult,
-  Adapter,
-  AdapterContext,
-} from "@aspex/schema";
+import type { Action, ActionResult, Adapter } from "@aspex/schema";
 import { parseItemId } from "@aspex/schema";
 import type { LivenessTicker } from "../engine/liveness";
 import type { WorldModel } from "../world/worldModel";
+import { createAdapterContext } from "./context";
 
 const sourceToAdapterId: Record<string, string> = {
   github: "github",
@@ -34,7 +30,9 @@ export class AdapterRegistry {
   async startAll(): Promise<void> {
     await Promise.all(
       [...this.adapters.values()].map((adapter) =>
-        adapter.start(this.contextFor(adapter)),
+        adapter.start(
+          createAdapterContext(this.world, this.liveness, adapter.id),
+        ),
       ),
     );
   }
@@ -100,35 +98,6 @@ export class AdapterRegistry {
     return action
       ? { requiresConfirmation: action.requiresConfirmation }
       : null;
-  }
-
-  private contextFor(adapter: Adapter): AdapterContext {
-    return {
-      emit: (signal) => this.world.applySignal(signal),
-      heartbeat: (source) => this.heartbeat(source),
-      log: (msg) => console.log(`[${adapter.id}] ${msg}`),
-    };
-  }
-
-  private heartbeat(source: string): void {
-    const before = this.world.snapshot();
-    const after = this.liveness.heartbeat(source, before);
-
-    for (let i = 0; i < after.length; i += 1) {
-      const current = before[i];
-      const updated = after[i];
-
-      if (
-        current !== undefined &&
-        updated !== undefined &&
-        current.id === updated.id &&
-        current.source === source &&
-        (current.staleAfter !== updated.staleAfter ||
-          current.liveness !== updated.liveness)
-      ) {
-        this.world.updateItem(updated);
-      }
-    }
   }
 
   private hasAction(actions: Action[], actionId: string): boolean {

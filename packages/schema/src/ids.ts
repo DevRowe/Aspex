@@ -11,6 +11,12 @@ export const codexSessionId = (threadId: string): ItemId =>
 
 export const webhookId = (key: string): ItemId => `webhook:${key}`;
 
+// Orchestrator items are `orchestrator:<orchId>:<taskId>` so the generic
+// parser yields source="orchestrator" and kind=<orchId> (which orchestrator
+// owns the item, e.g. "giles").
+export const orchestratorItemId = (orchId: string, taskId: string): ItemId =>
+  `orchestrator:${orchId}:${taskId}`;
+
 export function parseItemId(
   id: ItemId,
 ): { source: string; kind: string; rest: string } | null {

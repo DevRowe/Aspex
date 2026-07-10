@@ -6,7 +6,8 @@ export type Source =
   | "cursor"
   | "webhook"
   | "ntfy"
-  | "mcp";
+  | "mcp"
+  | "orchestrator";
 
 export type ItemId = string;
 

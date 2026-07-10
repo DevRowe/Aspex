@@ -23,6 +23,13 @@ const GITHUB_ATTENTION_REASONS = new Set<Reason>([
   "awaiting_merge",
 ]);
 
+const ORCHESTRATOR_ATTENTION_REASONS = new Set<Reason>([
+  "blocked_on_human",
+  "errored",
+  "review_requested",
+  "awaiting_merge",
+]);
+
 const WEBHOOK_ATTENTION_REASON_BY_STATE: Partial<Record<State, Reason>> = {
   blocked: "blocked_on_human",
   needs_review: "review_requested",
@@ -110,6 +117,14 @@ export function enforceOwnership(item: AttentionItem): AttentionItem {
     item.source === "github" &&
     item.attentionRequired &&
     GITHUB_ATTENTION_REASONS.has(item.reason)
+  ) {
+    return { ...item };
+  }
+
+  if (
+    item.source === "orchestrator" &&
+    item.attentionRequired &&
+    ORCHESTRATOR_ATTENTION_REASONS.has(item.reason)
   ) {
     return { ...item };
   }

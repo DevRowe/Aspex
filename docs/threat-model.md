@@ -1,9 +1,10 @@
 # Threat Model
 
-This document describes the security stance as shipped through Phase 3. It is
-scoped to the local Hub, web cockpit, desktop shell, Phase 0 adapters, and the
-Phase 1 flat voice loop, the Phase 2 Preview Deck, and Phase 3 free-form intent
-plus observe-only agent adapters.
+This document describes the security stance as shipped through Phase 3 and the
+orchestrator protocol core. It is scoped to the local Hub, web cockpit, desktop
+shell, Phase 0 adapters, the Phase 1 flat voice loop, the Phase 2 Preview Deck,
+Phase 3 free-form intent plus observe-only agent adapters, and the Hub-side
+orchestrator direction channel.
 
 ## Security Goals
 
@@ -33,10 +34,11 @@ not a summarization or command-execution path.
 
 ## Local-Only Boundary
 
-The Hub binds `127.0.0.1` and is same-machine only today.
-The browser CORS origin policy is localhost/Tauri-only.
-Under the north-star realignment it is intended to become reachable from glasses over a private tailnet, so "on the box" will no longer imply "is the user."
-There is still no automatic public ingress, and the bind-address/CORS change is part of the protocol implementation follow-up.
+The Hub binds `127.0.0.1` by default and is then same-machine only.
+The browser CORS origin policy is localhost/Tauri-only by default.
+Under the north-star realignment glasses reach the Hub over a private tailnet: the operator opts in by setting the bind address (`hubBind`/`ASPEX_HUB_BIND`, e.g. the dev box's tailnet address) and, for a browser client, at most one extra exact CORS origin (`corsOrigin`/`ASPEX_HUB_CORS_ORIGIN`).
+So "on the box" no longer implies "is the user"; the bearer token below is the compensating control.
+There is still no automatic public ingress: nothing in Aspex binds a public interface or opens a tunnel for you.
 
 The desktop shell and web client talk to the local Hub over REST and SSE.
 The Hub stores state locally in SQLite.
@@ -47,8 +49,8 @@ does not make generic webhook actions writable in Phase 0.
 
 ## Hub API Auth
 
-Because the Hub is intended to become reachable over a tailnet rather than pure loopback, every HTTP and SSE endpoint already requires a locally generated bearer token (ADR-0023).
-The token was added before the bind-address and CORS origin-policy change so any future tailnet peer cannot read the world-model, dispatch actions, or inject Signals without it.
+Because the Hub can be made reachable over a tailnet rather than pure loopback, every HTTP and SSE endpoint requires a locally generated bearer token (ADR-0023).
+The token landed before the bind-address and CORS origin-policy change so a tailnet peer cannot read the world-model, dispatch actions, or inject Signals without it.
 
 The token is generated on first boot and stored in `~/.aspex/config.json`, or supplied through `ASPEX_HUB_TOKEN`, which takes precedence and is never written to disk.
 It is a same-machine credential today and a future same-tailnet credential, not a public authentication system: one token, no accounts or sessions.
@@ -62,9 +64,9 @@ set headers; the tradeoff is that a query-string token can leak into logs, which
 is accepted for a local stream today and a future private-tailnet stream.
 The token is compared in constant time over fixed-length digests, and a missing or wrong token returns `401`.
 
-CORS origin policy remains local/Tauri-only: the token check runs after the CORS middleware, so preflight `OPTIONS` still succeeds.
+CORS origin policy stays local/Tauri-only plus at most one operator-configured exact origin (`corsOrigin`): the token check runs after the CORS middleware, so preflight `OPTIONS` still succeeds.
 The `POST /webhooks/cursor` route is the one bearer exemption, because it is reached by Cursor's cloud and authenticates with its own HMAC signature instead (ADR-0022).
-The bundled `aspex hook-relay` and `aspex preview list` present the token so same-box ingestion still works.
+The bundled `aspex hook-relay` and `aspex preview list` present the token and dial the configured bind address so same-box ingestion still works when the Hub binds a specific interface.
 
 ## Trusted and Untrusted Inputs
 
@@ -76,6 +78,8 @@ Trusted enough to parse, not trusted to execute:
 - OpenCode local `/event` SSE events.
 - Cursor `statusChange` webhook JSON when explicitly enabled.
 - Local webhook JSON.
+- Giles home files (`data/backlog.md`, `state/<id>.meta`, the status log) and
+  `bin/giles-worker-state.sh` output when the Giles orchestrator is enabled.
 - Mock/demo event fixtures.
 - Adapter evidence text and URLs.
 
@@ -120,7 +124,7 @@ trigger or confirm an action by itself. No-match never acts. Actions marked
 free text is accepted only after a dictation command, is read back, and is
 posted only after `post it` or `send it`.
 
-Voice service traffic is local-first. The Hub remains bound to `127.0.0.1`; when
+Voice service traffic is local-first. The Hub binds loopback by default; when
 real STT/TTS are enabled it calls configured local or tailnet HTTP services
 outbound. The reference service exposes `/transcribe` and `/speak` and is meant
 for a trusted localhost or tailnet/LAN address, not public ingress.
@@ -173,7 +177,7 @@ engine uses recognizable `aspex-preview-*` names, `--rm`, and a startup sweep to
 remove leftovers after a crash. Unexpected exit is surfaced as `crashed` with a
 message and is not auto-restarted.
 
-The Hub remains `127.0.0.1` only. Docker is opt-in and capability-detected; if
+The Hub binds loopback by default. Docker is opt-in and capability-detected; if
 the configured engine is unavailable, Preview routes are disabled with an
 honest warning and the Hub continues to run. CI and broker tests use the mock
 engine and require no Docker.
@@ -218,7 +222,7 @@ The route is signature-verified with the configured shared secret and fails
 closed without a secret. Unsigned or invalid payloads are rejected before they
 become Signals.
 
-Aspex never auto-exposes this endpoint. The Hub still binds `127.0.0.1`. If a
+Aspex never auto-exposes this endpoint. The Hub binds loopback by default. If a
 Cursor cloud agent can reach the route, that is the user's deliberate ingress
 choice, for example through their own Tailscale Funnel or equivalent tunnel.
 Aspex does not manage a public-webhook or Funnel subsystem in Phase 3.
@@ -226,6 +230,33 @@ Aspex does not manage a public-webhook or Funnel subsystem in Phase 3.
 Cursor payloads become agent-local Items such as `cursor:agent:<id>` with
 deep-links. They do not dispatch control actions and do not own PR-lifecycle
 attention.
+
+## Orchestrator Direction Channel
+
+The Giles orchestrator is opt-in and default off (`orchestrators.giles.enabled`
+or `ASPEX_GILES_ENABLED`). When disabled, no orchestrator routes dispatch
+anything and the Giles home is never read.
+
+Ingestion is read-only: the adapter polls the Giles home (backlog, task meta,
+`bin/giles-worker-state.sh`) and treats everything it reads as data, never
+code. The one place the adapter writes is the designated `state/aspex-inbox/`
+delivery directory, using atomic write-then-rename; Aspex never mutates a
+project or any other path in the Giles home.
+
+Direction is queue-only: an intent file is a request for Giles to execute the
+verb through its own sanctioned helpers, so Giles remains the enforcement
+point for what actually runs. Consequential verbs require the same
+confirmation gates as other actions: `requiresConfirmation` item actions and
+`dispatch` on `POST /intents` are refused with `409` until confirmed.
+
+Idempotency is the double-execution defense. Every intent carries a
+client-generated `intentId` restricted to a filename-safe alphabet
+(no separators, no leading dot, bounded length) so it cannot express path
+tricks when reused as the inbox filename. The Hub's bounded `IntentLedger`
+replays the cached ack for a retried intent, and the inbox filename is the
+durable backstop, so a retried ship cannot double-merge and a retried dispatch
+cannot spawn a second worker. Failures are not cached, so transient errors
+stay retryable.
 
 ## Future Labs Isolation
 

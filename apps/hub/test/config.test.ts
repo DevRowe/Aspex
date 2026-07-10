@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   DEFAULT_CONFIG,
   expandHome,
+  hubClientHost,
   loadConfig,
   persistHubToken,
   resolvedLivenessConfig,
@@ -64,6 +65,73 @@ describe("hub config", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  test("binds loopback with no extra CORS origin by default", async () => {
+    const cfg = await loadConfig({
+      defaultConfigPath: join(tmpdir(), `missing-aspex-${process.pid}.json`),
+      env: {},
+    });
+
+    expect(cfg.hubBind).toBe("127.0.0.1");
+    expect(cfg.corsOrigin).toBeUndefined();
+  });
+
+  test("ASPEX_HUB_BIND and ASPEX_HUB_CORS_ORIGIN override defaults", async () => {
+    const cfg = await loadConfig({
+      defaultConfigPath: join(tmpdir(), `missing-aspex-${process.pid}.json`),
+      env: {
+        ASPEX_HUB_BIND: "100.99.1.2",
+        ASPEX_HUB_CORS_ORIGIN: "http://hl2.tailnet:8080/",
+      },
+    });
+
+    expect(cfg.hubBind).toBe("100.99.1.2");
+    expect(cfg.corsOrigin).toBe("http://hl2.tailnet:8080");
+  });
+
+  test("rejects an invalid corsOrigin", async () => {
+    await expect(
+      loadConfig({
+        defaultConfigPath: join(tmpdir(), `missing-aspex-${process.pid}.json`),
+        env: { ASPEX_HUB_CORS_ORIGIN: "not a url" },
+      }),
+    ).rejects.toThrow("corsOrigin must be a valid origin");
+  });
+
+  test("hubClientHost dials loopback for wildcard binds and the bind otherwise", () => {
+    expect(hubClientHost({ hubBind: "0.0.0.0" })).toBe("127.0.0.1");
+    expect(hubClientHost({ hubBind: "::" })).toBe("127.0.0.1");
+    expect(hubClientHost({ hubBind: "127.0.0.1" })).toBe("127.0.0.1");
+    expect(hubClientHost({ hubBind: "100.99.1.2" })).toBe("100.99.1.2");
+    expect(hubClientHost({ hubBind: "fd7a::1" })).toBe("[fd7a::1]");
+  });
+
+  test("the giles orchestrator is off by default", async () => {
+    const cfg = await loadConfig({
+      defaultConfigPath: join(tmpdir(), `missing-aspex-${process.pid}.json`),
+      env: {},
+    });
+
+    expect(cfg.orchestrators?.giles?.enabled).toBe(false);
+    expect(cfg.orchestrators?.giles?.home).toBe(expandHome("~/giles"));
+  });
+
+  test("ASPEX_GILES_* env vars enable and point the giles orchestrator", async () => {
+    const cfg = await loadConfig({
+      defaultConfigPath: join(tmpdir(), `missing-aspex-${process.pid}.json`),
+      env: {
+        ASPEX_GILES_ENABLED: "true",
+        ASPEX_GILES_HOME: "/srv/giles",
+        ASPEX_GILES_POLL_INTERVAL_MS: "2500",
+      },
+    });
+
+    expect(cfg.orchestrators?.giles).toEqual({
+      enabled: true,
+      home: "/srv/giles",
+      pollIntervalMs: 2500,
+    });
   });
 
   test("voice is disabled by default", async () => {

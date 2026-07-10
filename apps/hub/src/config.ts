@@ -15,6 +15,13 @@ import type { LivenessConfig } from "./engine/liveness";
 
 export interface AspexConfig {
   hubPort: number;
+  // Interface the Hub HTTP server binds to (ADR-0023 tailnet model): loopback
+  // by default; set to the dev box's tailnet address to serve enrolled
+  // devices (the glasses). Never a public interface by default.
+  hubBind: string;
+  // One extra exact origin allowed by CORS, e.g. the HL2 Edge client's
+  // origin, alongside the built-in tauri://localhost and http://localhost:*.
+  corsOrigin?: string;
   dbPath: string;
   needsMeCap: number;
   pollIntervalMs: number;
@@ -26,7 +33,18 @@ export interface AspexConfig {
   intent?: IntentConfig;
   previews?: PreviewConfig;
   adapters?: AdaptersConfig;
+  orchestrators?: OrchestratorsConfig;
   mock?: boolean;
+}
+
+export interface OrchestratorsConfig {
+  giles?: {
+    enabled: boolean;
+    // The Giles home directory the adapter reads (and whose designated
+    // state/aspex-inbox it delivers intents into).
+    home: string;
+    pollIntervalMs?: number;
+  };
 }
 
 export interface VoiceConfig {
@@ -96,6 +114,9 @@ type ConfigFile = Partial<
     opencode?: Partial<NonNullable<AdaptersConfig["opencode"]>>;
     cursor?: Partial<NonNullable<AdaptersConfig["cursor"]>>;
   };
+  orchestrators?: {
+    giles?: Partial<NonNullable<OrchestratorsConfig["giles"]>>;
+  };
 };
 
 const DEFAULT_VOICE_CONFIG: VoiceConfig = {
@@ -126,6 +147,10 @@ const DEFAULT_PREVIEW_CONFIG: PreviewConfig = {
   specs: [],
 };
 
+const DEFAULT_ORCHESTRATORS_CONFIG: OrchestratorsConfig = {
+  giles: { enabled: false, home: "~/giles" },
+};
+
 const DEFAULT_ADAPTERS_CONFIG: AdaptersConfig = {
   codex: { enabled: false },
   opencode: { enabled: false, serverUrl: "http://127.0.0.1:4096" },
@@ -134,6 +159,7 @@ const DEFAULT_ADAPTERS_CONFIG: AdaptersConfig = {
 
 export const DEFAULT_CONFIG: AspexConfig = {
   hubPort: 4317,
+  hubBind: "127.0.0.1",
   dbPath: "~/.aspex/aspex.sqlite",
   needsMeCap: 7,
   pollIntervalMs: 60_000,
@@ -141,6 +167,7 @@ export const DEFAULT_CONFIG: AspexConfig = {
   intent: DEFAULT_INTENT_CONFIG,
   previews: DEFAULT_PREVIEW_CONFIG,
   adapters: DEFAULT_ADAPTERS_CONFIG,
+  orchestrators: DEFAULT_ORCHESTRATORS_CONFIG,
   liveness: {
     pollGraceMs: 90_000,
     heartbeatGraceMs: 120_000,
@@ -286,6 +313,10 @@ function mergeConfig(base: AspexConfig, override: ConfigFile): AspexConfig {
     intent: mergeIntentConfig(base.intent, override.intent),
     previews: mergePreviewConfig(base.previews, override.previews),
     adapters: mergeAdaptersConfig(base.adapters, override.adapters),
+    orchestrators: mergeOrchestratorsConfig(
+      base.orchestrators,
+      override.orchestrators,
+    ),
   };
 }
 
@@ -428,6 +459,26 @@ function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
     env.ASPEX_CURSOR_SECRET !== undefined
       ? optionalNonEmptyEnv(env.ASPEX_CURSOR_SECRET, "ASPEX_CURSOR_SECRET")
       : undefined;
+  const gilesEnabled =
+    env.ASPEX_GILES_ENABLED !== undefined
+      ? parseBoolean(
+          env.ASPEX_GILES_ENABLED,
+          cfg.orchestrators?.giles?.enabled,
+          "ASPEX_GILES_ENABLED",
+        )
+      : undefined;
+  const gilesHome =
+    env.ASPEX_GILES_HOME !== undefined
+      ? optionalNonEmptyEnv(env.ASPEX_GILES_HOME, "ASPEX_GILES_HOME")
+      : undefined;
+  const gilesPollIntervalMs =
+    env.ASPEX_GILES_POLL_INTERVAL_MS !== undefined
+      ? parseInteger(
+          env.ASPEX_GILES_POLL_INTERVAL_MS,
+          cfg.orchestrators?.giles?.pollIntervalMs,
+          "ASPEX_GILES_POLL_INTERVAL_MS",
+        )
+      : undefined;
   const github =
     githubToken !== undefined ||
     (cfg.github !== undefined && githubAllowlist !== undefined)
@@ -555,6 +606,24 @@ function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
         },
       }
     : cfg.adapters;
+  const hasGilesEnv =
+    gilesEnabled !== undefined ||
+    gilesHome !== undefined ||
+    gilesPollIntervalMs !== undefined;
+  const orchestratorsBase = cfg.orchestrators ?? DEFAULT_ORCHESTRATORS_CONFIG;
+  const orchestrators: AspexConfig["orchestrators"] = hasGilesEnv
+    ? {
+        ...orchestratorsBase,
+        giles: {
+          ...(orchestratorsBase.giles ?? { enabled: false, home: "~/giles" }),
+          ...(gilesEnabled !== undefined ? { enabled: gilesEnabled } : {}),
+          ...(gilesHome !== undefined ? { home: gilesHome } : {}),
+          ...(gilesPollIntervalMs !== undefined
+            ? { pollIntervalMs: gilesPollIntervalMs }
+            : {}),
+        },
+      }
+    : cfg.orchestrators;
 
   const auth = hubToken !== undefined ? { token: hubToken } : cfg.auth;
 
@@ -562,6 +631,11 @@ function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
     ...cfg,
     auth,
     hubPort: parseInteger(env.ASPEX_HUB_PORT, cfg.hubPort, "ASPEX_HUB_PORT"),
+    hubBind:
+      optionalNonEmptyEnv(env.ASPEX_HUB_BIND, "ASPEX_HUB_BIND") ?? cfg.hubBind,
+    corsOrigin:
+      optionalNonEmptyEnv(env.ASPEX_HUB_CORS_ORIGIN, "ASPEX_HUB_CORS_ORIGIN") ??
+      cfg.corsOrigin,
     dbPath:
       optionalNonEmptyEnv(env.ASPEX_DB_PATH, "ASPEX_DB_PATH") ?? cfg.dbPath,
     needsMeCap: parseInteger(
@@ -581,6 +655,7 @@ function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
     intent,
     previews,
     adapters,
+    orchestrators,
     liveness: {
       ...cfg.liveness,
       pollGraceMs: parseInteger(
@@ -615,11 +690,14 @@ function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
 function normalizeConfig(cfg: AspexConfig): AspexConfig {
   const normalized = {
     ...cfg,
+    hubBind: normalizeHubBind(cfg.hubBind),
+    corsOrigin: normalizeCorsOrigin(cfg.corsOrigin),
     dbPath: expandHome(cfg.dbPath),
     voice: normalizeVoiceConfig(cfg.voice, cfg.mock),
     intent: normalizeIntentConfig(cfg.intent, cfg.mock),
     previews: normalizePreviewConfig(cfg.previews),
     adapters: normalizeAdaptersConfig(cfg.adapters),
+    orchestrators: normalizeOrchestratorsConfig(cfg.orchestrators),
   };
 
   if (normalized.auth !== undefined) {
@@ -639,6 +717,99 @@ function normalizeConfig(cfg: AspexConfig): AspexConfig {
   }
 
   return normalized;
+}
+
+function normalizeOrchestratorsConfig(
+  orchestrators: OrchestratorsConfig | undefined,
+): OrchestratorsConfig {
+  const merged = mergeOrchestratorsConfig(
+    DEFAULT_ORCHESTRATORS_CONFIG,
+    orchestrators,
+  );
+  const giles = merged?.giles ?? { enabled: false, home: "~/giles" };
+
+  if (typeof giles.enabled !== "boolean") {
+    throw new Error("orchestrators.giles.enabled must be a boolean");
+  }
+
+  if (typeof giles.home !== "string" || giles.home.trim() === "") {
+    throw new Error("orchestrators.giles.home must be a non-empty path");
+  }
+
+  if (
+    giles.pollIntervalMs !== undefined &&
+    (!Number.isInteger(giles.pollIntervalMs) || giles.pollIntervalMs <= 0)
+  ) {
+    throw new Error(
+      "orchestrators.giles.pollIntervalMs must be a positive integer when set",
+    );
+  }
+
+  return {
+    giles: {
+      enabled: giles.enabled,
+      home: expandHome(giles.home.trim()),
+      ...(giles.pollIntervalMs === undefined
+        ? {}
+        : { pollIntervalMs: giles.pollIntervalMs }),
+    },
+  };
+}
+
+function mergeOrchestratorsConfig(
+  base: OrchestratorsConfig | undefined,
+  override: ConfigFile["orchestrators"] | undefined,
+): OrchestratorsConfig | undefined {
+  if (override === undefined) {
+    return base;
+  }
+
+  return {
+    ...(base ?? DEFAULT_ORCHESTRATORS_CONFIG),
+    giles: {
+      ...(base?.giles ?? { enabled: false, home: "~/giles" }),
+      ...override.giles,
+    },
+  } as OrchestratorsConfig;
+}
+
+function normalizeHubBind(bind: unknown): string {
+  if (typeof bind !== "string" || bind.trim() === "") {
+    throw new Error("hubBind must be a non-empty host or address");
+  }
+
+  return bind.trim();
+}
+
+function normalizeCorsOrigin(origin: unknown): string | undefined {
+  if (origin === undefined) {
+    return undefined;
+  }
+
+  if (typeof origin !== "string" || origin.trim() === "") {
+    throw new Error("corsOrigin must be a non-empty origin when set");
+  }
+
+  try {
+    return new URL(origin.trim()).origin;
+  } catch {
+    throw new Error(
+      "corsOrigin must be a valid origin, e.g. http://hl2.tailnet:8080",
+    );
+  }
+}
+
+// The address local CLI clients (hook relay, `aspex preview list`) dial to
+// reach the running Hub. A wildcard bind still serves loopback; a specific
+// bind serves only that address.
+export function hubClientHost(cfg: Pick<AspexConfig, "hubBind">): string {
+  const bind = cfg.hubBind;
+
+  if (bind === "0.0.0.0" || bind === "::" || bind === "*") {
+    return "127.0.0.1";
+  }
+
+  return bind.includes(":") ? `[${bind}]` : bind;
 }
 
 function normalizeAdaptersConfig(

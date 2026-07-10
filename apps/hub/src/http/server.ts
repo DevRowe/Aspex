@@ -4,8 +4,19 @@ import {
   verifyCursorSignature,
 } from "@aspex/adapter-cursor";
 import { normalizeWebhookBody } from "@aspex/adapter-webhook";
-import type { ActionResult, Source } from "@aspex/schema";
-import { assertSignal } from "@aspex/schema";
+import type {
+  ActionResult,
+  DispatchIntent,
+  IntentAck,
+  Source,
+  StatusQueryIntent,
+  StatusReport,
+} from "@aspex/schema";
+import {
+  assertDirectionIntent,
+  assertSignal,
+  isValidIntentId,
+} from "@aspex/schema";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { Bus } from "../bus";
@@ -15,6 +26,7 @@ import type { PreviewRegistry } from "../preview/registry";
 import type { VoiceGateway } from "../voice/gateway";
 import type { WorldModel } from "../world/worldModel";
 import { hubAuth } from "./auth";
+import { IntentLedger } from "./intentLedger";
 import { registerPreviewRoutes, subscribePreviewEvents } from "./preview";
 import { createStateStream } from "./sse";
 import { registerVoiceRoutes } from "./voice";
@@ -27,6 +39,9 @@ export interface ServerDeps {
   // Local bearer token required on every endpoint (ADR-0023). When omitted the
   // app is unauthenticated; the Hub boot path always supplies one.
   authToken?: string;
+  // One extra exact origin allowed by CORS (the HL2 Edge client), alongside
+  // the built-in tauri://localhost and http://localhost:*.
+  corsOrigin?: string;
   dispatchAction: (
     itemId: string,
     actionId: string,
@@ -36,6 +51,16 @@ export interface ServerDeps {
     itemId: string,
     actionId: string,
   ) => { requiresConfirmation: boolean } | null;
+  // Referent-less direction verbs (design 2.4): dispatch new work and
+  // status-query, delivered to the orchestrator registry. When omitted the
+  // POST /intents route is not registered.
+  intents?: {
+    dispatch: (intent: DispatchIntent) => Promise<IntentAck>;
+    query: (intent: StatusQueryIntent) => Promise<StatusReport>;
+  };
+  // Shared idempotency ledger for /intents and /actions (design 2.6). The
+  // boot path supplies one so it survives app rebuilds.
+  intentLedger?: IntentLedger;
   voiceGateway?: VoiceGateway;
   voice?: {
     enabled: boolean;
@@ -65,7 +90,9 @@ export function buildApp(deps: ServerDeps): Hono {
     "*",
     cors({
       origin: (origin) =>
-        origin === "tauri://localhost" || origin.startsWith("http://localhost:")
+        origin === "tauri://localhost" ||
+        origin.startsWith("http://localhost:") ||
+        (deps.corsOrigin !== undefined && origin === deps.corsOrigin)
           ? origin
           : undefined,
       allowHeaders: ["Authorization", "Content-Type"],
@@ -174,26 +201,117 @@ export function buildApp(deps: ServerDeps): Hono {
     }
   });
 
+  const ledger = deps.intentLedger ?? new IntentLedger();
+
   app.post("/actions/:itemId/:actionId", async (c) => {
     const itemId = c.req.param("itemId");
     const actionId = c.req.param("actionId");
-    let body: { confirmed?: boolean; payload?: unknown };
+    let body: { confirmed?: boolean; intentId?: unknown; payload?: unknown };
     try {
       body = await readOptionalJson(c.req.raw);
     } catch (error) {
       return c.json({ message: validationMessage(error) }, 400);
     }
+
+    // Optional idempotency key (design 2.6): a retried consequential action
+    // returns the recorded ack instead of running twice.
+    const intentId = body.intentId;
+
+    if (intentId !== undefined && !isValidIntentId(intentId)) {
+      return c.json({ message: "Invalid intentId" }, 400);
+    }
+
+    if (
+      intentId !== undefined &&
+      body.payload !== undefined &&
+      !isRecord(body.payload)
+    ) {
+      return c.json(
+        { message: "payload must be an object when intentId is set" },
+        400,
+      );
+    }
+
+    if (intentId !== undefined) {
+      const seen = ledger.get(intentId);
+
+      if (seen !== null) {
+        return c.json(seen.body, seen.status as 200);
+      }
+    }
+
     const meta = deps.actionMeta(itemId, actionId);
 
     if (meta?.requiresConfirmation && body.confirmed !== true) {
       return c.json({ message: "Action requires confirmation" }, 409);
     }
 
-    const result = await deps.dispatchAction(itemId, actionId, body.payload);
+    // The intentId rides inside the payload so the owning orchestrator can
+    // reuse it as the delivery-inbox filename (end-to-end dedupe).
+    const payload =
+      intentId === undefined
+        ? body.payload
+        : { ...(isRecord(body.payload) ? body.payload : {}), intentId };
+    const result = await deps.dispatchAction(itemId, actionId, payload);
+
+    if (intentId !== undefined && result.ok) {
+      ledger.record(intentId, { status: 200, body: result });
+    }
+
     return c.json(result);
   });
 
+  if (deps.intents !== undefined) {
+    registerIntentsRoute(app, deps.intents, ledger);
+  }
+
   return app;
+}
+
+// POST /intents: the one new route of the orchestrator protocol (design 2.4)
+// for the two verbs with no pre-existing item - dispatch and status-query.
+// Item-scoped verbs stay on /actions and inherit the confirmation gate there.
+function registerIntentsRoute(
+  app: Hono,
+  intents: NonNullable<ServerDeps["intents"]>,
+  ledger: IntentLedger,
+): void {
+  app.post("/intents", async (c) => {
+    let intent: DispatchIntent | StatusQueryIntent;
+    try {
+      const body = await c.req.json();
+      assertDirectionIntent(body);
+      intent = body;
+    } catch (error) {
+      return c.json({ message: validationMessage(error) }, 400);
+    }
+
+    if (intent.verb === "status_query") {
+      const report = await intents.query(intent);
+      return c.json(report, report.ok ? 200 : 404);
+    }
+
+    const seen = ledger.get(intent.intentId);
+
+    if (seen !== null) {
+      return c.json(seen.body, seen.status as 202);
+    }
+
+    // Same two-step confirm as consequential actions: dispatch spends real
+    // compute, so an unconfirmed intent is refused and nothing is delivered.
+    if (intent.confirmed !== true) {
+      return c.json({ message: "Action requires confirmation" }, 409);
+    }
+
+    const ack = await intents.dispatch(intent);
+
+    if (ack.ok) {
+      ledger.record(intent.intentId, { status: 202, body: ack });
+      return c.json(ack, 202);
+    }
+
+    return c.json(ack, 502);
+  });
 }
 
 function registerCursorWebhookRoute(app: Hono, deps: ServerDeps): void {

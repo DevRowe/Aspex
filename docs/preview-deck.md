@@ -101,7 +101,7 @@ is deferred by ADR-0016.
 
 ## Security Model
 
-The Hub and cockpit remain bound to `127.0.0.1`. Preview container ports also
+The Hub and cockpit bind `127.0.0.1` by default. Preview container ports also
 bind to `127.0.0.1`, but to a different port and therefore a different browser
 origin from the cockpit.
 

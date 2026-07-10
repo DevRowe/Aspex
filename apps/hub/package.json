@@ -13,6 +13,7 @@
     "@aspex/adapter-claude-code": "workspace:*",
     "@aspex/adapter-codex": "workspace:*",
     "@aspex/adapter-cursor": "workspace:*",
+    "@aspex/adapter-giles": "workspace:*",
     "@aspex/adapter-github": "workspace:*",
     "@aspex/adapter-mock": "workspace:*",
     "@aspex/adapter-ntfy": "workspace:*",
