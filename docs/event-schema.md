@@ -17,23 +17,14 @@ export type Source =
   | "cursor"
   | "webhook"
   | "ntfy"
-  | "mcp";
+  | "mcp"
+  | "orchestrator";
 ```
-
-Phase 3 Sources are:
-
-- `github`
-- `claude-code`
-- `codex`
-- `opencode`
-- `cursor`
-- `webhook`
-- `ntfy`
-- `mcp`
 
 Phase 0 implements GitHub, Claude Code, mock, webhook, and ntfy behavior. Phase
 3 adds observe-only codex, opencode, and cursor adapters. MCP remains a
-schema-level provision.
+schema-level provision. `orchestrator` is the orchestrator-protocol Source:
+items owned by a bidirectional Orchestrator backend such as Giles.
 
 ## Stable Item Ids
 
@@ -48,6 +39,7 @@ Examples:
 - `opencode:session:<id>`
 - `cursor:agent:<id>`
 - `webhook:<key>`
+- `orchestrator:<orchId>:<taskId>` (e.g. `orchestrator:giles:fix-auth-d2`)
 
 Helpers in `packages/schema/src/ids.ts` create common ids:
 
@@ -56,6 +48,7 @@ githubPrId(repo, number);
 claudeSessionId(sessionId);
 codexSessionId(sessionId);
 webhookId(key);
+orchestratorItemId(orchId, taskId);
 parseItemId(id);
 ```
 
@@ -160,9 +153,9 @@ The needs-me list is capped by Hub config.
 - `stale`
 - `lost`
 
-Polled sources, such as GitHub, use poll health. Push sources, such as Claude
-Code hooks, use heartbeat freshness. Terminal states do not decay. See
-ADR-0003.
+Polled sources, such as GitHub and orchestrator items, use poll health. Push
+sources, such as Claude Code hooks, use heartbeat freshness. Terminal states do
+not decay. See ADR-0003.
 
 ## Actions and Deep-Links
 
@@ -345,6 +338,77 @@ They own agent-local attention only; PR lifecycle attention remains owned by
 
 Use reason `errored`, not `error`. `error` is a `State`; `errored` is the
 ranking `Reason`.
+
+## Orchestrator Contract
+
+The canonical orchestrator-protocol types live in
+`packages/schema/src/orchestrator.ts`. An `Orchestrator` is a first-class
+contract, not an `Adapter` extension: it matches the Adapter item-scoped
+surface (`start`/`listActions`/`runAction`/`stop`) so `/actions` routing
+reuses the registries, and adds `dispatch`/`query` for the two referent-less
+direction verbs.
+
+```ts
+export interface DispatchIntent {
+  verb: "dispatch";
+  intentId: string;
+  orchestrator: OrchestratorId;
+  project?: string;
+  instruction: string;
+  confirmed?: boolean;
+}
+
+export interface StatusQueryIntent {
+  verb: "status_query";
+  intentId: string;
+  orchestrator?: OrchestratorId;
+  scope?: "needs_me" | ItemId;
+}
+
+export type DirectionIntent = DispatchIntent | StatusQueryIntent;
+
+export interface IntentAck {
+  ok: boolean;
+  acceptedId?: ItemId;
+  message?: string;
+}
+
+export interface StatusReport {
+  ok: boolean;
+  text: string;
+}
+```
+
+Every intent carries a client-generated `intentId` used as the idempotency
+key. It is filename-safe by construction (`isValidIntentId`:
+`/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/`) because the reference Giles adapter
+reuses it as the delivery-inbox filename. The orchestrator lifecycle maps onto
+the existing `State`/`Reason`/`Severity` vocabulary with zero new enum
+members; the Giles mapping lives in `packages/adapter-giles/src/map.ts`.
+
+## `/intents`
+
+`POST /intents` accepts a `DirectionIntent` JSON body and serves only the two
+referent-less verbs; item-scoped direction verbs ride the existing
+`POST /actions/:itemId/:actionId` and its confirmation gate.
+
+- `dispatch` requires `confirmed: true` (otherwise HTTP 409) and returns an
+  `IntentAck` with HTTP 202 on success or 502 when the orchestrator rejects
+  it.
+- `status_query` is safe and returns a `StatusReport` with HTTP 200, or 404
+  when the report is not ok (for example an unknown target). A whole-inbox
+  scope (`needs_me` or omitted) answers from the Hub's own ranked world-model;
+  a single-item scope defers to the owning orchestrator.
+
+Retried intents with an already-processed `intentId` replay the cached ack
+from the Hub's bounded `IntentLedger` LRU. Failures are not cached, so
+transient errors stay retryable. Invalid bodies return HTTP 400.
+
+`POST /actions/:itemId/:actionId` also accepts an optional `intentId` field
+next to `confirmed` and `payload`. A retried consequential action returns the
+recorded ack instead of running twice, and the Hub threads the `intentId`
+into the payload so the owning orchestrator reuses it as the inbox filename
+(end-to-end dedupe).
 
 ## `/voice/utterance`
 

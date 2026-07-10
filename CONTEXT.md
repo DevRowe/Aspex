@@ -4,10 +4,9 @@ Aspex is the augmented-reality layer for directing coding agents: a presentation
 It is the **face and the protocol, never the orchestrator** - a chief-of-staff orchestrator (Giles is the first and reference backend) owns the agents; Aspex renders, ranks, and directs.
 
 Honest state of the code: the Hub, world-model, ranking, liveness, HTTP/SSE protocol, and voice loop are built and tested, and they are presentation-agnostic (an AR client speaks to them over `EventSource` + `fetch` today).
-What does **not** exist yet is the outbound direction channel - nothing here can send an instruction to a running agent.
-GitHub actions are two-way; every coding-agent adapter is observe-only and offers a Deep-link, not an Action.
-The direction verbs, the orchestrator protocol, and the Giles adapter are the next build, defined by the forthcoming protocol ADR (in design).
-This glossary describes the current world-model vocabulary; the direction-channel vocabulary lands with that ADR.
+The Hub-side half of the outbound direction channel is now built too: the Orchestrator contract, the direction verbs, and the reference Giles adapter (design report: giles task `aspex-protocol-design-d1`); the Giles-side consumer is a parallel build against the same design.
+GitHub and the Giles orchestrator are the only two-way surfaces; every coding-agent adapter is observe-only and offers a Deep-link, not an Action.
+The Giles direction channel only queues intent files for Giles to execute through its own sanctioned helpers; Aspex itself never mutates a project.
 
 ## Language
 
@@ -81,7 +80,7 @@ _Avoid_: routing, precedence.
 ### Adapters & ingestion
 
 **Source**:
-The system an Item originates from, named on the Item: `github | claude-code | codex | opencode | cursor | webhook | ntfy | mcp`.
+The system an Item originates from, named on the Item: `github | claude-code | codex | opencode | cursor | webhook | ntfy | mcp | orchestrator`.
 A label on data, distinct from the Adapter that talks to it.
 _Avoid_: provider, integration, connector.
 
@@ -89,6 +88,17 @@ _Avoid_: provider, integration, connector.
 A pluggable module that ingests Signals from one Source into the world-model and dispatches Actions back out to it.
 Implements a single interface (`start`/`listActions`/`runAction`/`stop`) so new Sources slot in without touching the engine.
 _Avoid_: plugin, driver, connector.
+
+**Orchestrator**:
+A bidirectional peer that **owns agents** - a first-class contract distinct from an Adapter (an observed source), defined in `packages/schema/src/orchestrator.ts`.
+It covers the Adapter item-scoped surface (`start`/`listActions`/`runAction`/`stop`) so `/actions` routing reuses the registries, and adds `dispatch`/`query` for the two referent-less direction verbs.
+Its Items are `orchestrator:<orchId>:<taskId>`; Giles is the first and reference backend.
+_Avoid_: adapter (for this role), backend (informal only), agent manager.
+
+**Direction intent**:
+One outbound instruction Aspex hands to an Orchestrator - an item-scoped verb (approve/deny, answer, redirect, review-and-ship) riding `POST /actions` with its confirmation gate, or a referent-less verb (dispatch, status query) riding `POST /intents`.
+Every intent carries a client-generated, filename-safe `intentId`; the Hub's IntentLedger replays the cached ack on retry so a retried intent can never run twice.
+_Avoid_: command, order, task (collides with the orchestrator's own unit).
 
 **Provision**:
 An Adapter whose interface is stubbed now but wired later.
@@ -207,7 +217,7 @@ _Avoid_: preview mode, render path.
 
 Naming honesty: earlier docs and the Phase 3 commit called this the "delegation core", but it delegates nothing.
 Free-form intent is a smarter parser for the closed grammar's fallback, constrained to the live Intent space; it is not the direction channel and not an orchestrator.
-The real delegation - direction verbs acting back through the orchestrator - is the next build.
+The real delegation - direction verbs acting back through the orchestrator - is the Direction intent channel above.
 
 **Free-form intent**:
 The capability to turn a natural-language utterance or typed line into a single structured [[Command grammar|Intent]] via the local [[Intent service]], used **only as a fallback** when the closed Command grammar yields `unknown_command`.

@@ -5,7 +5,8 @@ The goal is ambient supervision on the go: your agents work, their needs and res
 
 This is a north-star realignment (2026-07).
 The tested backend below - the Hub, the `@aspex/schema` wire contract, attention ranking, liveness, the HTTP/SSE protocol, and the voice loop - is real and carries forward.
-The desktop cockpit and Preview Deck it grew up inside are now legacy (see [Legacy surfaces](#legacy-surfaces)), and the outbound direction channel that the vision needs is the next build, not something shipped today.
+The desktop cockpit and Preview Deck it grew up inside are now legacy (see [Legacy surfaces](#legacy-surfaces)).
+The Hub-side half of the outbound direction channel - the orchestrator protocol core and the reference Giles adapter - is now built; the Giles-side consumer is a parallel build against the same design.
 
 ## The vision in one page
 
@@ -17,8 +18,8 @@ The first thing that has to work is a blocked agent finding you in another room,
 Aspex renders, ranks, and directs.
 A chief-of-staff orchestrator owns the agents; Giles is the first and reference backend.
 The contract between them - status and attention streaming in, direction intents flowing out - is the product.
-That protocol is in design; its ADR will land alongside the first adapter.
-Today's codebase is honest about the gap: it observes and ranks well, but nothing in it can yet send an instruction to a running agent.
+The Hub-side half of that protocol is built (design report: giles task `aspex-protocol-design-d1`): orchestrator items stream into the world-model, item-scoped direction verbs ride `POST /actions` with its confirmation gate, and the two referent-less verbs (dispatch, status query) ride the new `POST /intents`.
+Aspex still never mutates a project itself: the Giles direction channel only queues intent files that Giles executes through its own sanctioned helpers.
 
 **Two client tiers, one backend.**
 Text at code size is not readable on today's glasses, so everything wearer-facing is a summarized card, never a raw diff.
@@ -29,9 +30,9 @@ Text at code size is not readable on today's glasses, so everything wearer-facin
 
 **Topology: Hub on the dev box, glasses over a private tailnet next.**
 The Hub runs on the same machine as your agents, holds the world-model, and stays local-first - no cloud relay in the MVP.
-Today the Hub binds `127.0.0.1` and the browser CORS allowlist is localhost/Tauri-only, so shipped access is same-machine.
-The intended topology is that glasses will reach it over a private [Tailscale](https://tailscale.com)-style tailnet once the protocol implementation opens the bind address and origin policy.
-The Hub API requires a local auth token now so it is not wide open when that tailnet reachability lands (see [Hub API auth](#hub-api-auth)).
+By default the Hub binds `127.0.0.1` and the browser CORS allowlist is localhost/Tauri-only, so out-of-the-box access is same-machine.
+To let glasses reach it over a private [Tailscale](https://tailscale.com)-style tailnet, set the bind address (`hubBind` in config or `ASPEX_HUB_BIND`, e.g. the dev box's tailnet address) and, for a browser client such as the HL2 Edge lab client, one extra exact CORS origin (`corsOrigin` or `ASPEX_HUB_CORS_ORIGIN`).
+Every endpoint requires the local auth token, so the API is not wide open when that tailnet reachability is enabled (see [Hub API auth](#hub-api-auth)).
 
 **Two client tracks: lab first.**
 
@@ -54,14 +55,17 @@ Nobody occupies the AR-agent-direction space yet; the differentiation is what on
                          the agents)            HTTP/SSE,           placed panels on
                          direction intents      voice loop,          Aura-class glasses
                          flow back out <---      auth token)   <---  tailnet target
-                                                                    (localhost-only today)
+                                                                    (loopback bind by default)
 ```
 
 - The **Hub** is a single local process: an in-process bus, SSE for one-way world-model diffs, a small REST API for control, and SQLite as the authoritative store (ADR-0005).
 - **Adapters** ingest Signals from each Source into the world-model.
-  Today they are observe-first: GitHub is two-way (approve, merge, comment, re-run); every coding-agent adapter (Claude Code, codex, opencode, cursor) is observe-only and offers a deep-link, not an action.
-- The **outbound direction channel** - the six direction verbs (approve/deny, answer a blocked question, redirect in-flight work, dispatch new work, status query, review-and-ship) acting back through the orchestrator - is greenfield work defined by the forthcoming protocol ADR.
-  Consequential verbs will ride the Hub's existing arm/confirm voice state machine rather than a new confirmation framework.
+  They are observe-first: every coding-agent adapter (Claude Code, codex, opencode, cursor) is observe-only and offers a deep-link, not an action.
+  GitHub and the Giles orchestrator are the only two-way surfaces.
+- An **Orchestrator** is a first-class contract distinct from an Adapter (`packages/schema/src/orchestrator.ts`): a bidirectional peer that owns agents, streaming `orchestrator:<orchId>:<taskId>` items in and accepting direction intents out.
+- The **outbound direction channel** carries the direction verbs (approve/deny, answer a blocked question, redirect in-flight work, dispatch new work, status query, review-and-ship) back through the orchestrator.
+  Item-scoped verbs ride the existing `POST /actions/:itemId/:actionId` with its confirmation gate; only dispatch and status query use the new `POST /intents`.
+  Consequential verbs ride the Hub's existing arm/confirm stack rather than a new confirmation framework, and every intent carries a client `intentId` that the Hub's `IntentLedger` dedupes end-to-end so a retried ship cannot double-merge.
 
 Domain language lives in [CONTEXT.md](CONTEXT.md) and architecture decisions in [docs/adr](docs/adr).
 
@@ -110,12 +114,33 @@ When enabled with a shared secret, Aspex accepts signed `statusChange` webhook
 payloads at the local Hub and shows agent-local status and deep-links only.
 Aspex does not expose the Hub publicly for you.
 
+## Giles Orchestrator
+
+Giles is the reference Orchestrator backend and, alongside GitHub, one of the
+two two-way surfaces.
+It is opt-in and default off; enable it with `orchestrators.giles.enabled` in
+config or with environment variables:
+
+```sh
+ASPEX_GILES_ENABLED=true \
+ASPEX_GILES_HOME=~/giles \
+bun apps/hub/src/cli.ts hub
+```
+
+`ASPEX_GILES_POLL_INTERVAL_MS` tunes the poll cadence.
+The adapter reads the Giles home read-only and streams in-flight tasks as
+`orchestrator:giles:<taskId>` items.
+Direction verbs (approve/deny, answer, redirect, dispatch, status query,
+review-and-ship) are queued as intent files in the designated
+`state/aspex-inbox/` delivery directory for Giles to execute through its own
+sanctioned helpers; Aspex itself never mutates a project.
+
 ## Hub API auth
 
-Today the Hub binds `127.0.0.1` and the browser CORS allowlist is localhost/Tauri-only.
-It is same-machine only in the shipped path.
-The Hub is designed to become reachable from glasses over a private tailnet, so every HTTP and SSE endpoint already requires a locally generated bearer token.
-That token was added before the bind-address and origin-policy change so the API is not wide open the moment tailnet reachability lands.
+By default the Hub binds `127.0.0.1` and the browser CORS allowlist is localhost/Tauri-only, so it is same-machine unless you opt in.
+`hubBind`/`ASPEX_HUB_BIND` opens the bind address (for glasses on a private tailnet) and `corsOrigin`/`ASPEX_HUB_CORS_ORIGIN` allows one extra exact browser origin.
+Because the Hub can be made reachable beyond loopback, every HTTP and SSE endpoint requires a locally generated bearer token.
+When the Hub binds a specific interface, the bundled local CLI callers (`aspex hook-relay`, `aspex preview list`) dial that same address automatically.
 On first boot the Hub generates a token and stores it in `~/.aspex/config.json` under `auth.token`.
 You can also supply one through the `ASPEX_HUB_TOKEN` environment variable, which takes precedence and is never written to disk.
 When you supply `ASPEX_HUB_TOKEN`, make the same environment variable available

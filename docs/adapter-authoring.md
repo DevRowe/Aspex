@@ -31,6 +31,14 @@ and resources. `emit` sends a Signal to the Hub. `heartbeat` refreshes liveness
 without changing state. `listActions` and `runAction` expose only actions owned
 by the adapter.
 
+An `Orchestrator` (`packages/schema/src/orchestrator.ts`) is a separate
+first-class contract for bidirectional backends that own agents, such as
+Giles. It deliberately covers the Adapter item-scoped surface above so the Hub
+routes `POST /actions` for `orchestrator:*` items through the same machinery,
+and adds `dispatch`/`query` for the two referent-less direction verbs served
+by `POST /intents`. Do not model an orchestrator as an Adapter; register it in
+the orchestrator registry instead.
+
 ## Id Scheme
 
 Every Item id must be stable and source-derived. Use one Item per real-world
@@ -44,6 +52,7 @@ Use these patterns unless an ADR introduces a better source-specific shape:
 - OpenCode session: `opencode:session:<id>`
 - Cursor agent: `cursor:agent:<id>`
 - Webhook item: `webhook:<key>`
+- Orchestrator task: `orchestrator:<orchId>:<taskId>`
 
 Prefer helpers from `packages/schema/src/ids.ts`.
 
@@ -126,9 +135,9 @@ follows this pattern for `statusChange` webhooks.
 
 Webhook adapters must be opt-in, default off, and signature-verified. They must
 fail closed when the secret is absent or the signature is invalid. Do not expose
-the Hub publicly from adapter code. The Hub binds `127.0.0.1`; any tunnel or
-Funnel that lets a cloud webhook reach it is a deliberate user deployment
-choice.
+the Hub publicly from adapter code. The Hub binds `127.0.0.1` by default; any
+tunnel or Funnel that lets a cloud webhook reach it is a deliberate user
+deployment choice.
 
 Signed cloud-origin webhooks should emit observe-only Signals and deep-links.
 They must not imply that Aspex can control the cloud agent.
