@@ -22,6 +22,7 @@ import {
 } from "./map";
 import {
   type GilesWorkerState,
+  hasInFlightSection,
   isValidGilesTaskId,
   lastStatusEvent,
   parseBacklogInFlight,
@@ -218,9 +219,8 @@ export class GilesOrchestrator implements Orchestrator {
     this.running = true;
 
     try {
-      const refs = parseBacklogInFlight(
-        await this.readHomeFile("data/backlog.md"),
-      );
+      const backlog = await this.readHomeFile("data/backlog.md");
+      const refs = parseBacklogInFlight(backlog);
       const signals: Signal[] = [];
 
       for (const ref of refs) {
@@ -237,19 +237,23 @@ export class GilesOrchestrator implements Orchestrator {
       }
 
       // Tasks that left `## In flight` (merged / torn down) get one terminal
-      // Signal so they decay out of the world-model.
-      const currentIds = new Set(refs.map((ref) => ref.taskId));
+      // Signal so they decay out of the world-model. A backlog without the
+      // heading is missing or half-written, not empty - skip the sweep so a
+      // transient read gap cannot mass-dismiss live items.
+      if (hasInFlightSection(backlog)) {
+        const currentIds = new Set(refs.map((ref) => ref.taskId));
 
-      for (const taskId of this.knownTaskIds) {
-        if (currentIds.has(taskId)) {
-          continue;
+        for (const taskId of this.knownTaskIds) {
+          if (currentIds.has(taskId)) {
+            continue;
+          }
+
+          const departed = mapDepartedGilesTask(this.id, taskId);
+          this.actionsByItem.delete(departed.id);
+          this.knownTaskIds.delete(taskId);
+          signals.push(departed);
+          ctx.emit(departed);
         }
-
-        const departed = mapDepartedGilesTask(this.id, taskId);
-        this.actionsByItem.set(departed.id, []);
-        this.knownTaskIds.delete(taskId);
-        signals.push(departed);
-        ctx.emit(departed);
       }
 
       ctx.heartbeat("orchestrator");

@@ -265,6 +265,20 @@ describe("POST /actions idempotency (intentId)", () => {
     db.close();
   });
 
+  test("rejects a non-object payload sent with an intentId", async () => {
+    const { app, db, orchestrator } = openIntentsServer();
+
+    const response = await post(app, URL_PATH, {
+      confirmed: true,
+      intentId: "a-0",
+      payload: "ship it",
+    });
+
+    expect(response.status).toBe(400);
+    expect(orchestrator.runActionCalls).toHaveLength(0);
+    db.close();
+  });
+
   test("threads the intentId into the payload for the orchestrator", async () => {
     const { app, db, orchestrator } = openIntentsServer();
 

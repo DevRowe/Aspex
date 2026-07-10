@@ -221,6 +221,17 @@ export function buildApp(deps: ServerDeps): Hono {
       return c.json({ message: "Invalid intentId" }, 400);
     }
 
+    if (
+      intentId !== undefined &&
+      body.payload !== undefined &&
+      !isRecord(body.payload)
+    ) {
+      return c.json(
+        { message: "payload must be an object when intentId is set" },
+        400,
+      );
+    }
+
     if (intentId !== undefined) {
       const seen = ledger.get(intentId);
 

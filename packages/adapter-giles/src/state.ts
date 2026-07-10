@@ -48,6 +48,12 @@ const IN_FLIGHT_HEADING = /^##\s+In flight\s*$/;
 const HEADING = /^##\s+/;
 const TASK_LINE = /^- \[ \] (\S+) - (.*)$/;
 
+// A missing backlog file or a mid-rewrite partial read yields content without
+// the heading; callers use this to tell "no tasks" apart from "no data".
+export function hasInFlightSection(markdown: string): boolean {
+  return markdown.split("\n").some((line) => IN_FLIGHT_HEADING.test(line));
+}
+
 export function parseBacklogInFlight(markdown: string): GilesTaskRef[] {
   const refs: GilesTaskRef[] = [];
   let inFlight = false;

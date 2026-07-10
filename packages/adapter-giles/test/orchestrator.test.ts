@@ -132,6 +132,23 @@ describe("state IN: poll", () => {
     ).toBe(false);
   });
 
+  test("a backlog without the In flight section skips the departure sweep", async () => {
+    await orchestrator.poll(ctx);
+    await rm(join(home, "data/backlog.md"));
+
+    emitted = [];
+    await orchestrator.poll(ctx);
+    expect(emitted).toEqual([]);
+
+    await writeFile(join(home, "data/backlog.md"), "# Backlog\n\n## Done\n");
+    await orchestrator.poll(ctx);
+    expect(emitted).toEqual([]);
+
+    await writeFile(join(home, "data/backlog.md"), BACKLOG);
+    await orchestrator.poll(ctx);
+    expect(emitted.map((s) => s.state)).toEqual(["needs_review", "blocked"]);
+  });
+
   test("poll never writes into the giles home", async () => {
     const before = await readdir(join(home, "state"));
     await orchestrator.poll(ctx);
