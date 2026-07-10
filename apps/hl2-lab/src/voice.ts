@@ -18,7 +18,11 @@ export interface VoiceState {
 }
 
 export interface Capture {
-  start(): Promise<void>;
+  start(): CaptureSession;
+}
+
+export interface CaptureSession {
+  ready(): Promise<void>;
   stop(): Promise<Blob | null>;
   cancel(): void;
 }
@@ -30,8 +34,41 @@ type Fetcher = (
 
 export class MicrophoneCapture implements Capture {
   private activeCapture: ActiveCapture | null = null;
+  private generation = 0;
 
-  async start(): Promise<void> {
+  start(): CaptureSession {
+    const generation = ++this.generation;
+    this.activeCapture?.cancel();
+    let capture: ActiveCapture | null = null;
+    let cancelled = false;
+    const ready = this.startCapture(
+      generation,
+      () => cancelled,
+      (next) => {
+        capture = next;
+      },
+    );
+    return {
+      ready: () => ready,
+      stop: async () => {
+        await ready;
+        return capture === null ? null : this.stop(capture);
+      },
+      cancel: () => {
+        cancelled = true;
+        if (generation === this.generation) {
+          this.generation += 1;
+        }
+        capture?.cancel();
+      },
+    };
+  }
+
+  private async startCapture(
+    generation: number,
+    isCancelled: () => boolean,
+    setCapture: (capture: ActiveCapture) => void,
+  ): Promise<void> {
     if (
       !navigator.mediaDevices?.getUserMedia ||
       typeof MediaRecorder === "undefined"
@@ -39,14 +76,20 @@ export class MicrophoneCapture implements Capture {
       throw new Error("Microphone capture is unavailable in this browser.");
     }
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (isCancelled() || generation !== this.generation) {
+      releaseStream(stream);
+      return;
+    }
     const recorder = new MediaRecorder(stream);
     const capture: ActiveCapture = {
       stream,
       recorder,
       chunks: [],
       cancelled: false,
+      cancel: () => this.cancel(capture),
     };
     this.activeCapture = capture;
+    setCapture(capture);
     recorder.addEventListener("dataavailable", (event) => {
       if (
         this.activeCapture === capture &&
@@ -59,11 +102,10 @@ export class MicrophoneCapture implements Capture {
     recorder.start();
   }
 
-  async stop(): Promise<Blob | null> {
-    const capture = this.activeCapture;
-    if (capture === null || capture.recorder.state === "inactive") {
+  private stop(capture: ActiveCapture): Promise<Blob | null> {
+    if (capture.recorder.state === "inactive") {
       this.release(capture);
-      return null;
+      return Promise.resolve(null);
     }
     const recorder = capture.recorder;
     return new Promise((resolve) => {
@@ -85,11 +127,7 @@ export class MicrophoneCapture implements Capture {
     });
   }
 
-  cancel(): void {
-    const capture = this.activeCapture;
-    if (capture === null) {
-      return;
-    }
+  private cancel(capture: ActiveCapture): void {
     capture.cancelled = true;
     if (capture.recorder.state === "recording") {
       capture.recorder.stop();
@@ -101,9 +139,7 @@ export class MicrophoneCapture implements Capture {
     if (capture === null) {
       return;
     }
-    for (const track of capture.stream.getTracks()) {
-      track.stop();
-    }
+    releaseStream(capture.stream);
     if (this.activeCapture === capture) {
       this.activeCapture = null;
     }
@@ -115,6 +151,13 @@ interface ActiveCapture {
   recorder: MediaRecorder;
   chunks: BlobPart[];
   cancelled: boolean;
+  cancel(): void;
+}
+
+function releaseStream(stream: MediaStream): void {
+  for (const track of stream.getTracks()) {
+    track.stop();
+  }
 }
 
 export class VoiceController {
@@ -125,6 +168,7 @@ export class VoiceController {
   };
   private listeners = new Set<(state: VoiceState) => void>();
   private utteranceIntentId: string | null = null;
+  private captureSession: CaptureSession | null = null;
   private hubSessionActive = false;
   private held = false;
   private voiceGeneration = 0;
@@ -164,15 +208,23 @@ export class VoiceController {
     this.utteranceIntentId = createIntentId("voice");
     this.setState("permission", "Requesting microphone…", true);
     try {
-      await this.capture.start();
+      const captureSession = this.capture.start();
+      this.captureSession = captureSession;
+      await captureSession.ready();
       if (!this.held || generation !== this.voiceGeneration) {
-        this.capture.cancel();
-        this.utteranceIntentId = null;
-        this.setState("idle", "Hold to speak", false);
+        captureSession.cancel();
+        if (generation === this.voiceGeneration) {
+          this.utteranceIntentId = null;
+          this.setState("idle", "Hold to speak", false);
+        }
         return;
       }
+      this.captureSession = captureSession;
       this.setState("recording", "Listening — release to send", true);
     } catch (error) {
+      if (generation !== this.voiceGeneration) {
+        return;
+      }
       const denied =
         error instanceof DOMException && error.name === "NotAllowedError";
       this.setState(
@@ -190,8 +242,9 @@ export class VoiceController {
     }
     const generation = this.voiceGeneration;
     const intentId = this.utteranceIntentId;
+    const captureSession = this.captureSession;
     this.setState("transcribing", "Transcribing on the Hub…", true);
-    const audio = await this.capture.stop();
+    const audio = captureSession === null ? null : await captureSession.stop();
     if (generation !== this.voiceGeneration) {
       return;
     }
@@ -257,7 +310,9 @@ export class VoiceController {
   async cancel(): Promise<void> {
     this.held = false;
     const generation = ++this.voiceGeneration;
-    this.capture.cancel();
+    const captureSession = this.captureSession;
+    this.captureSession = null;
+    captureSession?.cancel();
     const mustCancelHubSession =
       this.hubSessionActive ||
       this.state.phase === "transcribing" ||

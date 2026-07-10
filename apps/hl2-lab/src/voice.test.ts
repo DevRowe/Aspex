@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { type Capture, MicrophoneCapture, VoiceController } from "./voice";
+import {
+  type Capture,
+  type CaptureSession,
+  MicrophoneCapture,
+  VoiceController,
+} from "./voice";
 
 class FakeCapture implements Capture {
   starts = 0;
@@ -7,20 +12,26 @@ class FakeCapture implements Capture {
   cancelled = 0;
   denied = false;
 
-  async start(): Promise<void> {
+  start(): CaptureSession {
     this.starts += 1;
     if (this.denied) {
-      throw new DOMException("denied", "NotAllowedError");
+      return {
+        ready: () =>
+          Promise.reject(new DOMException("denied", "NotAllowedError")),
+        stop: async () => null,
+        cancel: () => undefined,
+      };
     }
-  }
-
-  async stop(): Promise<Blob> {
-    this.stops += 1;
-    return new Blob(["audio"], { type: "audio/webm" });
-  }
-
-  cancel(): void {
-    this.cancelled += 1;
+    return {
+      ready: async () => undefined,
+      stop: async () => {
+        this.stops += 1;
+        return new Blob(["audio"], { type: "audio/webm" });
+      },
+      cancel: () => {
+        this.cancelled += 1;
+      },
+    };
   }
 }
 
@@ -91,13 +102,16 @@ describe("VoiceController", () => {
     let allow: (() => void) | undefined;
     const capture: Capture = {
       start: () =>
-        new Promise<void>((resolve) => {
-          allow = resolve;
-        }),
-      stop: async () => null,
-      cancel: () => {
-        cancelled += 1;
-      },
+        ({
+          ready: () =>
+            new Promise<void>((resolve) => {
+              allow = resolve;
+            }),
+          stop: async () => null,
+          cancel: () => {
+            cancelled += 1;
+          },
+        }) satisfies CaptureSession,
     };
     let cancelled = 0;
     const controller = new VoiceController(
@@ -273,6 +287,88 @@ describe("VoiceController", () => {
 });
 
 describe("MicrophoneCapture", () => {
+  test("does not let a cancelled permission request stop a newer capture", async () => {
+    const originalNavigator = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "navigator",
+    );
+    const originalMediaRecorder = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "MediaRecorder",
+    );
+    const resolvers: Array<(stream: MediaStream) => void> = [];
+    const recorders: FakeRecorder[] = [];
+    const older = fakeStream();
+    const newer = fakeStream();
+
+    class FakeRecorder {
+      state: RecordingState = "inactive";
+      mimeType = "audio/webm";
+      private listeners = new Map<string, Array<() => void>>();
+
+      constructor(_stream: MediaStream) {
+        recorders.push(this);
+      }
+
+      addEventListener(type: string, listener: () => void): void {
+        const listeners = this.listeners.get(type) ?? [];
+        listeners.push(listener);
+        this.listeners.set(type, listeners);
+      }
+
+      start(): void {
+        this.state = "recording";
+      }
+
+      stop(): void {
+        this.state = "inactive";
+        queueMicrotask(() => {
+          for (const listener of this.listeners.get("stop") ?? []) {
+            listener();
+          }
+        });
+      }
+    }
+
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        mediaDevices: {
+          getUserMedia: () =>
+            new Promise<MediaStream>((resolve) => resolvers.push(resolve)),
+        },
+      },
+    });
+    Object.defineProperty(globalThis, "MediaRecorder", {
+      configurable: true,
+      value: FakeRecorder,
+    });
+
+    try {
+      const controller = new VoiceController(
+        () => ({ hubUrl: "https://hub.test", token: "token" }),
+        () => ({ needsMeIds: [] }),
+        () => undefined,
+      );
+      const firstPress = controller.press();
+      await controller.cancel();
+      const secondPress = controller.press();
+      resolvers[1]?.(newer.stream);
+      await secondPress;
+      resolvers[0]?.(older.stream);
+      await firstPress;
+
+      expect(older.stopped()).toBe(true);
+      expect(newer.stopped()).toBe(false);
+      expect(recorders).toHaveLength(1);
+      expect(recorders[0]?.state).toBe("recording");
+      await controller.release();
+    } finally {
+      restoreGlobal("navigator", originalNavigator);
+      restoreGlobal("MediaRecorder", originalMediaRecorder);
+    }
+  });
+
   test("does not include late cancelled recorder chunks in the next capture", async () => {
     const originalNavigator = Object.getOwnPropertyDescriptor(
       globalThis,
@@ -333,10 +429,12 @@ describe("MicrophoneCapture", () => {
 
     try {
       const capture = new MicrophoneCapture();
-      await capture.start();
-      capture.cancel();
-      await capture.start();
-      const audio = await capture.stop();
+      const cancelled = capture.start();
+      await cancelled.ready();
+      cancelled.cancel();
+      const kept = capture.start();
+      await kept.ready();
+      const audio = await kept.stop();
 
       expect(await audio?.text()).toBe("kept");
     } finally {
@@ -345,6 +443,22 @@ describe("MicrophoneCapture", () => {
     }
   });
 });
+
+function fakeStream(): { stream: MediaStream; stopped(): boolean } {
+  let stopped = false;
+  return {
+    stream: {
+      getTracks: () => [
+        {
+          stop: () => {
+            stopped = true;
+          },
+        },
+      ],
+    } as unknown as MediaStream,
+    stopped: () => stopped,
+  };
+}
 
 function restoreGlobal(
   name: string,
