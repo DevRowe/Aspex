@@ -150,6 +150,14 @@ export class DirectionClient {
         retryable: response.status >= 500,
       };
     }
+    if (isFailedDirectionResponse(parsed)) {
+      return {
+        kind: "failed",
+        message,
+        status: response.status,
+        retryable: true,
+      };
+    }
     return {
       kind: "delivered",
       ok: response.ok,
@@ -158,6 +166,14 @@ export class DirectionClient {
       body: parsed,
     };
   }
+}
+
+function isFailedDirectionResponse(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as Record<string, unknown>).ok === false
+  );
 }
 
 function responseMessage(value: unknown, fallback: string): string {

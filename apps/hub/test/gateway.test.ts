@@ -126,6 +126,25 @@ describe("VoiceGateway", () => {
     });
   });
 
+  test("evicts the least recently used voice session at capacity", async () => {
+    const { gateway, dispatchAction } = makeGateway(
+      ["merge", "merge", "merge", "confirm merge", "confirm merge"],
+      { maxClientSessions: 2 },
+    );
+    const context = { selectedId: itemId, needsMeIds: [itemId] };
+
+    await gateway.handle(audio, "audio/webm", context, undefined, "client-a");
+    await gateway.handle(audio, "audio/webm", context, undefined, "client-b");
+    await gateway.handle(audio, "audio/webm", context, undefined, "client-c");
+    await gateway.handle(audio, "audio/webm", context, undefined, "client-a");
+    await gateway.handle(audio, "audio/webm", context, undefined, "client-c");
+
+    expect(dispatchAction).toHaveBeenCalledTimes(1);
+    expect(dispatchAction).toHaveBeenCalledWith(itemId, "merge", {
+      confirmed: true,
+    });
+  });
+
   test("does not restore a cancelled session when transcription finishes late", async () => {
     let completeTranscription: (transcript: Transcript) => void;
     const transcription = new Promise<Transcript>((resolve) => {

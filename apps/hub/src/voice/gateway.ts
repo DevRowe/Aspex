@@ -55,6 +55,7 @@ export interface GatewayDeps {
   intentService?: IntentService;
   snapshotCandidates?: () => IntentCandidate[];
   elevateFreeformConfirm?: boolean;
+  maxClientSessions?: number;
 }
 
 interface EffectResult {
@@ -71,8 +72,14 @@ interface ClientSession {
 
 export class VoiceGateway {
   private sessions = new Map<string, ClientSession>();
+  private readonly maxClientSessions: number;
 
-  constructor(private deps: GatewayDeps) {}
+  constructor(private deps: GatewayDeps) {
+    this.maxClientSessions = Math.max(
+      1,
+      Math.floor(deps.maxClientSessions ?? 256),
+    );
+  }
 
   async handle(
     audio: Uint8Array,
@@ -132,7 +139,7 @@ export class VoiceGateway {
     this.pruneSessions();
     const current = this.sessions.get(clientSessionId);
     if (current === undefined || generation >= current.generation) {
-      this.sessions.set(clientSessionId, {
+      this.storeSession(clientSessionId, {
         session: {},
         generation,
         usedAt: this.now(),
@@ -211,7 +218,7 @@ export class VoiceGateway {
     this.pruneSessions();
     const current = this.sessions.get(clientSessionId);
     if (current === undefined) {
-      this.sessions.set(clientSessionId, {
+      this.storeSession(clientSessionId, {
         session: {},
         generation,
         usedAt: this.now(),
@@ -223,6 +230,7 @@ export class VoiceGateway {
     }
     current.generation = generation;
     current.usedAt = this.now();
+    this.storeSession(clientSessionId, current);
     return cloneSession(current.session);
   }
 
@@ -237,6 +245,7 @@ export class VoiceGateway {
     }
     current.session = session;
     current.usedAt = this.now();
+    this.storeSession(clientSessionId, current);
     return true;
   }
 
@@ -258,6 +267,19 @@ export class VoiceGateway {
         this.sessions.delete(clientSessionId);
       }
     }
+    while (this.sessions.size > this.maxClientSessions) {
+      const oldest = this.sessions.keys().next().value;
+      if (oldest === undefined) {
+        return;
+      }
+      this.sessions.delete(oldest);
+    }
+  }
+
+  private storeSession(clientSessionId: string, session: ClientSession): void {
+    this.sessions.delete(clientSessionId);
+    this.sessions.set(clientSessionId, session);
+    this.pruneSessions();
   }
 
   private now(): number {

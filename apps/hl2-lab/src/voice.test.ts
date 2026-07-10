@@ -284,6 +284,53 @@ describe("VoiceController", () => {
     await controller.press();
     expect(capture.starts).toBe(2);
   });
+
+  test("blocks a new capture until a pending Hub cancellation resolves", async () => {
+    const capture = new FakeCapture();
+    let resolveCancellation: ((response: Response) => void) | undefined;
+    const controller = new VoiceController(
+      () => ({ hubUrl: "https://hub.test", token: "token" }),
+      () => ({ needsMeIds: [] }),
+      () => undefined,
+      capture,
+      ((input) => {
+        if (String(input).endsWith("/voice/utterance")) {
+          return Promise.resolve(
+            Response.json({
+              ok: true,
+              readback: "Say confirm ship.",
+              session: {
+                pendingConfirm: {
+                  itemId: "item",
+                  actionId: "ship",
+                  label: "Ship",
+                  armedAt: new Date().toISOString(),
+                },
+              },
+            }),
+          );
+        }
+        return new Promise<Response>((resolve) => {
+          resolveCancellation = resolve;
+        });
+      }) as typeof fetch,
+    );
+
+    await controller.press();
+    await controller.release();
+    const cancelling = controller.cancel();
+    await Promise.resolve();
+    expect(controller.snapshot().phase).toBe("cancelling");
+    await controller.press();
+    expect(capture.starts).toBe(1);
+
+    resolveCancellation?.(
+      Response.json({ ok: true, readback: "Cancelled.", session: {} }),
+    );
+    await cancelling;
+    await controller.press();
+    expect(capture.starts).toBe(2);
+  });
 });
 
 describe("MicrophoneCapture", () => {

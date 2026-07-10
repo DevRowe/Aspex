@@ -7,6 +7,7 @@ export type VoicePhase =
   | "permission"
   | "recording"
   | "transcribing"
+  | "cancelling"
   | "armed"
   | "uncertain"
   | "error";
@@ -199,6 +200,7 @@ export class VoiceController {
       this.state.phase === "recording" ||
       this.state.phase === "permission" ||
       this.state.phase === "transcribing" ||
+      this.state.phase === "cancelling" ||
       this.state.phase === "uncertain"
     ) {
       return;
@@ -308,6 +310,9 @@ export class VoiceController {
   }
 
   async cancel(): Promise<void> {
+    if (this.state.phase === "cancelling") {
+      return;
+    }
     this.held = false;
     const generation = ++this.voiceGeneration;
     const captureSession = this.captureSession;
@@ -318,6 +323,7 @@ export class VoiceController {
       this.state.phase === "transcribing" ||
       this.state.phase === "uncertain";
     if (mustCancelHubSession) {
+      this.setState("cancelling", "Cancelling voice session…", true);
       try {
         const cfg = this.config();
         const response = await this.fetcher(
@@ -337,6 +343,9 @@ export class VoiceController {
           );
         }
       } catch (error) {
+        if (generation !== this.voiceGeneration) {
+          return;
+        }
         this.setState(
           "uncertain",
           `${errorMessage(error)} Cancellation is uncertain; try again before speaking.`,
@@ -344,6 +353,9 @@ export class VoiceController {
         );
         return;
       }
+    }
+    if (generation !== this.voiceGeneration) {
+      return;
     }
     this.hubSessionActive = false;
     this.utteranceIntentId = null;

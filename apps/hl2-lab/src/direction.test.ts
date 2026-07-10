@@ -106,4 +106,26 @@ describe("DirectionClient", () => {
       payload: { mergeWord: "merge" },
     });
   });
+
+  test("treats an unsuccessful action response body as a retryable failure", async () => {
+    const client = new DirectionClient(
+      () => ({ hubUrl: "https://hub.test", token: "token" }),
+      (() =>
+        Promise.resolve(
+          Response.json({ ok: false, message: "Giles inbox unavailable" }),
+        )) as unknown as typeof fetch,
+    );
+
+    const result = await client.action(
+      client.beginAction("orchestrator:giles:task", "approve"),
+      true,
+    );
+
+    expect(result).toEqual({
+      kind: "failed",
+      message: "Giles inbox unavailable",
+      status: 200,
+      retryable: true,
+    });
+  });
 });
