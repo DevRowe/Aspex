@@ -8,10 +8,18 @@ import type {
 
 export type Effect =
   | { kind: "dispatch"; itemId: ItemId; actionId: string; payload?: unknown }
+  | {
+      kind: "dispatchIntent";
+      intentId: string;
+      orchestrator: string;
+      instruction: string;
+    }
+  | { kind: "queryIntent"; intentId: string }
   | { kind: "navigate"; directive: ClientDirective }
   | { kind: "read"; target: ItemId }
   | { kind: "open"; target: ItemId }
   | { kind: "armed"; itemId: ItemId; actionId: string; label: string }
+  | { kind: "armedDispatch"; instruction: string }
   | { kind: "dictation_prompt"; itemId: ItemId; actionId: string }
   | {
       kind: "dictation_readback";
@@ -46,10 +54,16 @@ export function reduce(
           actionId: intent.actionId,
           label,
           armedAt: new Date(meta.now).toISOString(),
+          ...(intent.intentId !== undefined
+            ? { intentId: intent.intentId }
+            : {}),
         };
 
         return {
-          next: { ...withoutPendingConfirm(current), pendingConfirm },
+          next: {
+            ...withoutPendingDispatch(withoutPendingConfirm(current)),
+            pendingConfirm,
+          },
           effect: {
             kind: "armed",
             itemId: intent.itemId,
@@ -60,11 +74,14 @@ export function reduce(
       }
 
       return {
-        next: withoutPendingConfirm(current),
+        next: withoutPendingDispatch(withoutPendingConfirm(current)),
         effect: {
           kind: "dispatch",
           itemId: intent.itemId,
           actionId: intent.actionId,
+          ...(intent.intentId !== undefined
+            ? { payload: { intentId: intent.intentId } }
+            : {}),
         },
       };
     }
@@ -82,6 +99,11 @@ export function reduce(
             kind: "dispatch",
             itemId: intent.itemId,
             actionId: intent.actionId,
+            ...(pending.payload !== undefined
+              ? { payload: pending.payload }
+              : pending.intentId !== undefined
+                ? { payload: { intentId: pending.intentId } }
+                : {}),
           },
         };
       }
@@ -95,8 +117,14 @@ export function reduce(
     case "dictate":
       return {
         next: {
-          ...withoutPendingConfirm(current),
-          dictating: { itemId: intent.itemId, actionId: intent.actionId },
+          ...withoutPendingDispatch(withoutPendingConfirm(current)),
+          dictating: {
+            itemId: intent.itemId,
+            actionId: intent.actionId,
+            ...(intent.intentId !== undefined
+              ? { intentId: intent.intentId }
+              : {}),
+          },
         },
         effect: {
           kind: "dictation_prompt",
@@ -137,35 +165,111 @@ export function reduce(
         };
       }
 
+      const payload = dictationPayload(
+        dictating.actionId,
+        dictating.pendingBody,
+        dictating.intentId,
+      );
+      if (meta.requiresConfirmation(dictating.itemId, dictating.actionId)) {
+        const label = meta.actionLabel(dictating.itemId, dictating.actionId);
+        return {
+          next: {
+            pendingConfirm: {
+              itemId: dictating.itemId,
+              actionId: dictating.actionId,
+              label,
+              armedAt: new Date(meta.now).toISOString(),
+              payload,
+              ...(dictating.intentId !== undefined
+                ? { intentId: dictating.intentId }
+                : {}),
+            },
+          },
+          effect: {
+            kind: "armed",
+            itemId: dictating.itemId,
+            actionId: dictating.actionId,
+            label,
+          },
+        };
+      }
       return {
-        next: withoutPendingConfirm(withoutDictating(current)),
+        next: withoutPendingDispatch(
+          withoutPendingConfirm(withoutDictating(current)),
+        ),
         effect: {
           kind: "dispatch",
           itemId: dictating.itemId,
           actionId: dictating.actionId,
-          payload: { body: dictating.pendingBody },
+          payload,
         },
       };
     }
+
+    case "dispatch_task": {
+      const intentId = intent.intentId ?? fallbackIntentId(meta.now);
+      return {
+        next: {
+          pendingDispatch: {
+            intentId,
+            orchestrator: intent.orchestrator,
+            instruction: intent.instruction,
+            armedAt: new Date(meta.now).toISOString(),
+          },
+        },
+        effect: { kind: "armedDispatch", instruction: intent.instruction },
+      };
+    }
+
+    case "confirm_dispatch": {
+      const pending = current.pendingDispatch;
+      if (
+        pending !== undefined &&
+        (intent.intentId === undefined || intent.intentId === pending.intentId)
+      ) {
+        return {
+          next: withoutPendingDispatch(current),
+          effect: {
+            kind: "dispatchIntent",
+            intentId: pending.intentId,
+            orchestrator: pending.orchestrator,
+            instruction: pending.instruction,
+          },
+        };
+      }
+      return {
+        next: withoutPendingDispatch(current),
+        effect: { kind: "noMatch", reason: "unknown_command" },
+      };
+    }
+
+    case "status_query":
+      return {
+        next: withoutPendingDispatch(withoutPendingConfirm(current)),
+        effect: {
+          kind: "queryIntent",
+          intentId: intent.intentId ?? fallbackIntentId(meta.now),
+        },
+      };
 
     case "cancel":
       return { next: {}, effect: { kind: "cancelled" } };
 
     case "nav":
       return {
-        next: withoutPendingConfirm(current),
+        next: withoutPendingDispatch(withoutPendingConfirm(current)),
         effect: { kind: "navigate", directive: intent.directive },
       };
 
     case "read":
       return {
-        next: withoutPendingConfirm(current),
+        next: withoutPendingDispatch(withoutPendingConfirm(current)),
         effect: { kind: "read", target: intent.target },
       };
 
     case "open":
       return {
-        next: withoutPendingConfirm(current),
+        next: withoutPendingDispatch(withoutPendingConfirm(current)),
         effect: { kind: "open", target: intent.target },
       };
 
@@ -185,16 +289,22 @@ function clearExpiredPendingConfirm(
   session: VoiceSession,
   meta: ReduceMeta,
 ): VoiceSession {
-  const pending = session.pendingConfirm;
-  if (pending === undefined) {
-    return cloneSession(session);
+  let current = cloneSession(session);
+  const pending = current.pendingConfirm;
+  if (
+    pending !== undefined &&
+    meta.now - Date.parse(pending.armedAt) > meta.confirmTtlMs
+  ) {
+    current = withoutPendingConfirm(current);
   }
-
-  if (meta.now - Date.parse(pending.armedAt) > meta.confirmTtlMs) {
-    return withoutPendingConfirm(session);
+  const pendingDispatch = current.pendingDispatch;
+  if (
+    pendingDispatch !== undefined &&
+    meta.now - Date.parse(pendingDispatch.armedAt) > meta.confirmTtlMs
+  ) {
+    current = withoutPendingDispatch(current);
   }
-
-  return cloneSession(session);
+  return current;
 }
 
 function cloneSession(session: VoiceSession): VoiceSession {
@@ -205,6 +315,9 @@ function cloneSession(session: VoiceSession): VoiceSession {
   if (session.dictating !== undefined) {
     next.dictating = { ...session.dictating };
   }
+  if (session.pendingDispatch !== undefined) {
+    next.pendingDispatch = { ...session.pendingDispatch };
+  }
   return next;
 }
 
@@ -213,6 +326,9 @@ function withoutPendingConfirm(session: VoiceSession): VoiceSession {
   const next: VoiceSession = { ...rest };
   if (session.dictating !== undefined) {
     next.dictating = { ...session.dictating };
+  }
+  if (session.pendingDispatch !== undefined) {
+    next.pendingDispatch = { ...session.pendingDispatch };
   }
   return next;
 }
@@ -223,5 +339,29 @@ function withoutDictating(session: VoiceSession): VoiceSession {
   if (session.pendingConfirm !== undefined) {
     next.pendingConfirm = { ...session.pendingConfirm };
   }
+  if (session.pendingDispatch !== undefined) {
+    next.pendingDispatch = { ...session.pendingDispatch };
+  }
   return next;
+}
+
+function withoutPendingDispatch(session: VoiceSession): VoiceSession {
+  const { pendingDispatch: _pendingDispatch, ...rest } = session;
+  return cloneSession(rest);
+}
+
+function dictationPayload(
+  actionId: string,
+  body: string,
+  intentId: string | undefined,
+): Record<string, unknown> {
+  const textVerbs = new Set(["answer", "redirect", "deny"]);
+  return {
+    [textVerbs.has(actionId) ? "text" : "body"]: body,
+    ...(intentId !== undefined ? { intentId } : {}),
+  };
+}
+
+function fallbackIntentId(now: number): string {
+  return `voice-${now.toString(36)}`;
 }

@@ -27,6 +27,7 @@ The Hub-side half of the Aspex-orchestrator protocol (design report: giles task 
 - Bun workspace. `bun install`, then `bun run typecheck`, `bun test`, `bun run lint` (biome). CI runs exactly these plus a Python voice-server mock contract.
 - `noUncheckedIndexedAccess` is on; index and regex-group access is possibly-undefined.
 - Long Markdown docs are written one sentence per line.
+- **HL2 lab commands.** `apps/hl2-lab` is an unsupported, lab-only WebXR design instrument, never a product target or a legacy-cockpit extension; use `bun run --cwd apps/hl2-lab dev`, `bun run build:hl2-lab`, and `bun run test:hl2-lab`, with on-device pairing and wear-test notes in `docs/hl2-lab.md`.
 
 ## Sharp edges
 

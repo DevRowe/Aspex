@@ -193,6 +193,48 @@ describe("hub HTTP voice routes", () => {
       pttKey: "KeyV",
     });
   });
+
+  test("passes a filename-safe client intent id to the voice gateway", async () => {
+    let receivedIntentId: string | undefined;
+    const gateway = {
+      handle: async (
+        _audio: Uint8Array,
+        _mime: string,
+        _context: VoiceContext,
+        intentId?: string,
+      ) => {
+        receivedIntentId = intentId;
+        return voiceResult();
+      },
+    } as unknown as VoiceGateway;
+    const form = utteranceForm();
+    form.set("intentId", "hl2-voice-1");
+    const { app } = openServer({ voiceGateway: gateway });
+    const response = await app.fetch(
+      new Request("http://hub.test/voice/utterance", {
+        method: "POST",
+        body: form,
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(receivedIntentId).toBe("hl2-voice-1");
+  });
+
+  test("POST /voice/cancel clears a server-side arm without dispatching", async () => {
+    let cancels = 0;
+    const gateway = {
+      cancel: async () => {
+        cancels += 1;
+        return voiceResult();
+      },
+    } as unknown as VoiceGateway;
+    const { app } = openServer({ voiceGateway: gateway });
+    const response = await app.fetch(
+      new Request("http://hub.test/voice/cancel", { method: "POST" }),
+    );
+    expect(response.status).toBe(200);
+    expect(cancels).toBe(1);
+  });
 });
 
 function openServer(overrides: Partial<ServerDeps> = {}) {

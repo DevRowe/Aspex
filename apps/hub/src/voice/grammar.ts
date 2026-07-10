@@ -14,18 +14,23 @@ export interface ParseInput {
   selectedActions: Action[];
   resolveProject: (name: string) => ItemId | "ambiguous" | null;
   confidenceThreshold: number;
+  intentId?: string;
 }
 
 type ActionIntentKind = "action" | "dictate";
 
 interface Verb {
-  actionId: "approve" | "rerun" | "merge" | "comment" | "request_changes";
+  actionId: string;
   kind: ActionIntentKind;
   phrases: readonly string[];
 }
 
 const VERBS: readonly Verb[] = [
   { actionId: "approve", kind: "action", phrases: ["approve"] },
+  { actionId: "deny", kind: "dictate", phrases: ["deny"] },
+  { actionId: "answer", kind: "dictate", phrases: ["answer"] },
+  { actionId: "redirect", kind: "dictate", phrases: ["redirect"] },
+  { actionId: "ship", kind: "action", phrases: ["ship", "review and ship"] },
   { actionId: "rerun", kind: "action", phrases: ["re-run", "re-run checks"] },
   { actionId: "merge", kind: "action", phrases: ["merge"] },
   { actionId: "comment", kind: "dictate", phrases: ["comment"] },
@@ -63,6 +68,16 @@ export function parse(input: ParseInput): Intent {
     return { kind: "cancel" };
   }
 
+  if (
+    normalized === "confirm dispatch" &&
+    input.session.pendingDispatch !== undefined
+  ) {
+    return {
+      kind: "confirm_dispatch",
+      intentId: input.session.pendingDispatch.intentId,
+    };
+  }
+
   const confirmMatch = /^confirm (.+)$/.exec(normalized);
   const confirmVerb = confirmMatch?.[1];
   if (
@@ -80,6 +95,29 @@ export function parse(input: ParseInput): Intent {
 
   if (normalized === "what needs me" || normalized === "show what needs me") {
     return { kind: "nav", directive: { type: "show_needs_me" } };
+  }
+
+  if (normalized === "status" || normalized === "status query") {
+    return {
+      kind: "status_query",
+      ...(input.intentId ? { intentId: input.intentId } : {}),
+    };
+  }
+
+  if (normalized.startsWith("dispatch ")) {
+    const instruction = input.transcript.text
+      .trim()
+      .replace(/^dispatch\s+/i, "")
+      .trim();
+    if (instruction === "") {
+      return noMatch(input.transcript.text, "unknown_command");
+    }
+    return {
+      kind: "dispatch_task",
+      instruction,
+      orchestrator: "giles",
+      ...(input.intentId ? { intentId: input.intentId } : {}),
+    };
   }
 
   if (normalized === "next") {
@@ -138,6 +176,7 @@ export function parse(input: ParseInput): Intent {
         kind: "dictate",
         itemId: input.context.selectedId,
         actionId: verb.actionId,
+        ...(input.intentId ? { intentId: input.intentId } : {}),
       };
     }
 
@@ -145,6 +184,7 @@ export function parse(input: ParseInput): Intent {
       kind: "action",
       itemId: input.context.selectedId,
       actionId: verb.actionId,
+      ...(input.intentId ? { intentId: input.intentId } : {}),
     };
   }
 

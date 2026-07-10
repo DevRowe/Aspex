@@ -24,6 +24,8 @@ function makeGateway(
       action("merge", { label: "Merge", requiresConfirmation: true }),
       action("comment"),
       action("request_changes"),
+      action("redirect", { label: "Redirect", requiresConfirmation: true }),
+      action("ship", { label: "Review & ship", requiresConfirmation: true }),
     ],
     resolveProject: () => null,
     snapshotNeedsMe: () => [itemId, secondId],
@@ -225,5 +227,58 @@ describe("VoiceGateway", () => {
     expect(nullResult.audio).toBeUndefined();
     expect(emptyResult.audio).toBeUndefined();
     expect(failedResult.audio).toBeUndefined();
+  });
+
+  test("voice dispatch arms, requires a second utterance, and reuses the client intent id", async () => {
+    const dispatchIntent = mock(async () => ({ ok: true, message: "Queued." }));
+    const { gateway } = makeGateway(
+      ["dispatch build the lab checklist", "confirm dispatch"],
+      { dispatchIntent },
+    );
+    const context = { needsMeIds: [itemId] };
+
+    const armed = await gateway.handle(
+      audio,
+      "audio/webm",
+      context,
+      "hl2-dispatch-1",
+    );
+    expect(armed.session.pendingDispatch?.intentId).toBe("hl2-dispatch-1");
+    expect(dispatchIntent).not.toHaveBeenCalled();
+    const confirmed = await gateway.handle(
+      audio,
+      "audio/webm",
+      context,
+      "hl2-confirm-2",
+    );
+    expect(dispatchIntent).toHaveBeenCalledTimes(1);
+    expect(dispatchIntent).toHaveBeenCalledWith({
+      verb: "dispatch",
+      intentId: "hl2-dispatch-1",
+      orchestrator: "giles",
+      instruction: "build the lab checklist",
+      confirmed: true,
+    });
+    expect(confirmed.session.pendingDispatch).toBeUndefined();
+  });
+
+  test("voice status query uses the existing referent-less intent route", async () => {
+    const queryIntent = mock(async () => ({
+      ok: true,
+      text: "Two things need you.",
+    }));
+    const { gateway } = makeGateway(["status query"], { queryIntent });
+    const result = await gateway.handle(
+      audio,
+      "audio/webm",
+      { needsMeIds: [] },
+      "hl2-status-1",
+    );
+    expect(queryIntent).toHaveBeenCalledWith({
+      verb: "status_query",
+      intentId: "hl2-status-1",
+      scope: "needs_me",
+    });
+    expect(result.readback).toBe("Two things need you.");
   });
 });

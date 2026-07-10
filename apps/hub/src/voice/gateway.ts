@@ -3,10 +3,12 @@ import {
   type ActionResult,
   type ClientDirective,
   type Intent,
+  type IntentAck,
   type IntentCandidate,
   type IntentSource,
   type ItemId,
   type NoMatchReason,
+  type StatusReport,
   type Transcript,
   type VoiceContext,
   type VoiceResult,
@@ -31,6 +33,18 @@ export interface GatewayDeps {
     actionId: string,
     payload?: unknown,
   ) => Promise<ActionResult>;
+  dispatchIntent?: (intent: {
+    verb: "dispatch";
+    intentId: string;
+    orchestrator: string;
+    instruction: string;
+    confirmed: true;
+  }) => Promise<IntentAck>;
+  queryIntent?: (intent: {
+    verb: "status_query";
+    intentId: string;
+    scope: "needs_me";
+  }) => Promise<StatusReport>;
   getSelectedActions: (id: ItemId) => Action[];
   resolveProject: (name: string) => ItemId | "ambiguous" | null;
   snapshotNeedsMe: () => ItemId[];
@@ -58,6 +72,7 @@ export class VoiceGateway {
     audio: Uint8Array,
     mime: string,
     context: VoiceContext,
+    intentId?: string,
   ): Promise<VoiceGatewayResult> {
     let transcript: Transcript;
     try {
@@ -70,19 +85,30 @@ export class VoiceGateway {
       });
     }
 
-    return this.runPipeline(transcript, context);
+    return this.runPipeline(transcript, context, intentId);
   }
 
   async handleText(
     text: string,
     context: VoiceContext,
+    intentId?: string,
   ): Promise<VoiceGatewayResult> {
-    return this.runPipeline({ text, confidence: 1 }, context);
+    return this.runPipeline({ text, confidence: 1 }, context, intentId);
+  }
+
+  async cancel(): Promise<VoiceGatewayResult> {
+    this.session = {};
+    return this.withAudio({
+      ok: true,
+      readback: "Cancelled.",
+      session: this.session,
+    });
   }
 
   private async runPipeline(
     transcript: Transcript,
     context: VoiceContext,
+    intentId?: string,
   ): Promise<VoiceGatewayResult> {
     let provenance: IntentSource = "grammar";
     const selectedActions =
@@ -97,6 +123,7 @@ export class VoiceGateway {
       selectedActions,
       resolveProject: this.deps.resolveProject,
       confidenceThreshold: this.deps.confidenceThreshold,
+      ...(intentId !== undefined ? { intentId } : {}),
     });
 
     if (
@@ -145,6 +172,14 @@ export class VoiceGateway {
         result = await this.dispatchEffect(effect, intent);
         break;
 
+      case "dispatchIntent":
+        result = await this.dispatchIntentEffect(effect);
+        break;
+
+      case "queryIntent":
+        result = await this.queryIntentEffect(effect);
+        break;
+
       case "navigate":
         result = {
           ok: true,
@@ -169,6 +204,13 @@ export class VoiceGateway {
         result = {
           ok: true,
           readback: `Say 'confirm ${effect.actionId}' to ${effect.label} ${effect.itemId}.`,
+        };
+        break;
+
+      case "armedDispatch":
+        result = {
+          ok: true,
+          readback: `Dispatch armed: ${effect.instruction}. Say 'confirm dispatch' to send it, or 'cancel'.`,
         };
         break;
 
@@ -221,6 +263,46 @@ export class VoiceGateway {
     return {
       ok: result.ok,
       readback: result.message ?? (result.ok ? "Done." : "Action failed."),
+    };
+  }
+
+  private async dispatchIntentEffect(
+    effect: Extract<Effect, { kind: "dispatchIntent" }>,
+  ): Promise<EffectResult> {
+    if (this.deps.dispatchIntent === undefined) {
+      return { ok: false, readback: "Dispatch is not configured." };
+    }
+    const result = await this.deps.dispatchIntent({
+      verb: "dispatch",
+      intentId: effect.intentId,
+      orchestrator: effect.orchestrator,
+      instruction: effect.instruction,
+      confirmed: true,
+    });
+    return {
+      ok: result.ok,
+      readback:
+        result.message ??
+        (result.ok
+          ? "Dispatched. The resulting item will appear in the stream."
+          : "Dispatch failed."),
+    };
+  }
+
+  private async queryIntentEffect(
+    effect: Extract<Effect, { kind: "queryIntent" }>,
+  ): Promise<EffectResult> {
+    if (this.deps.queryIntent === undefined) {
+      return { ok: false, readback: "Status query is not configured." };
+    }
+    const result = await this.deps.queryIntent({
+      verb: "status_query",
+      intentId: effect.intentId,
+      scope: "needs_me",
+    });
+    return {
+      ok: result.ok,
+      readback: result.text,
     };
   }
 
@@ -321,6 +403,11 @@ function effectInterpretation(effect: Effect): string | undefined {
     case "dispatch":
     case "armed":
       return `${effect.actionId} ${effect.itemId}`;
+    case "dispatchIntent":
+    case "armedDispatch":
+      return `dispatch ${effect.instruction}`;
+    case "queryIntent":
+      return "query status";
     case "read":
       return `read ${effect.target}`;
     case "open":

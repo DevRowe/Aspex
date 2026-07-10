@@ -11,6 +11,10 @@ const allActions = [
   action("merge", { requiresConfirmation: true, risk: "dangerous" }),
   action("comment"),
   action("request_changes"),
+  action("deny"),
+  action("answer"),
+  action("redirect"),
+  action("ship", { requiresConfirmation: true, risk: "dangerous" }),
 ];
 
 function baseInput(overrides: Partial<ParseInput> = {}): ParseInput {
@@ -160,6 +164,61 @@ describe("parse", () => {
       kind: "no_match",
       heard: "confirm approve",
       reason: "unknown_command",
+    });
+  });
+
+  test("parses every orchestrator item verb against live action metadata", () => {
+    expect(parseText("deny")).toEqual({
+      kind: "dictate",
+      itemId: selectedId,
+      actionId: "deny",
+    });
+    expect(parseText("answer")).toEqual({
+      kind: "dictate",
+      itemId: selectedId,
+      actionId: "answer",
+    });
+    expect(parseText("redirect")).toEqual({
+      kind: "dictate",
+      itemId: selectedId,
+      actionId: "redirect",
+    });
+    expect(parseText("review and ship")).toEqual({
+      kind: "action",
+      itemId: selectedId,
+      actionId: "ship",
+    });
+  });
+
+  test("parses referent-less dispatch and status with the client intent id", () => {
+    expect(
+      parseText("dispatch add the lab wear test", {
+        intentId: "hl2-dispatch-1",
+      }),
+    ).toEqual({
+      kind: "dispatch_task",
+      instruction: "add the lab wear test",
+      orchestrator: "giles",
+      intentId: "hl2-dispatch-1",
+    });
+    expect(parseText("status query", { intentId: "hl2-status-1" })).toEqual({
+      kind: "status_query",
+      intentId: "hl2-status-1",
+    });
+  });
+
+  test("confirms only the currently armed dispatch", () => {
+    const session: VoiceSession = {
+      pendingDispatch: {
+        intentId: "hl2-dispatch-1",
+        orchestrator: "giles",
+        instruction: "add the lab wear test",
+        armedAt: "2026-06-28T00:00:00.000Z",
+      },
+    };
+    expect(parseText("confirm dispatch", { session })).toEqual({
+      kind: "confirm_dispatch",
+      intentId: "hl2-dispatch-1",
     });
   });
 

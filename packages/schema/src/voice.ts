@@ -16,9 +16,17 @@ export type Intent =
   | { kind: "nav"; directive: ClientDirective }
   | { kind: "read"; target: ItemId }
   | { kind: "open"; target: ItemId }
-  | { kind: "action"; itemId: ItemId; actionId: string }
+  | { kind: "action"; itemId: ItemId; actionId: string; intentId?: string }
   | { kind: "confirm"; itemId: ItemId; actionId: string }
-  | { kind: "dictate"; itemId: ItemId; actionId: string }
+  | { kind: "dictate"; itemId: ItemId; actionId: string; intentId?: string }
+  | {
+      kind: "dispatch_task";
+      instruction: string;
+      orchestrator: string;
+      intentId?: string;
+    }
+  | { kind: "confirm_dispatch"; intentId?: string }
+  | { kind: "status_query"; intentId?: string }
   | { kind: "dictation_body"; text: string }
   | { kind: "post" }
   | { kind: "cancel" }
@@ -45,8 +53,21 @@ export interface VoiceSession {
     actionId: string;
     label: string;
     armedAt: string;
+    intentId?: string;
+    payload?: unknown;
   };
-  dictating?: { itemId: ItemId; actionId: string; pendingBody?: string };
+  pendingDispatch?: {
+    intentId: string;
+    orchestrator: string;
+    instruction: string;
+    armedAt: string;
+  };
+  dictating?: {
+    itemId: ItemId;
+    actionId: string;
+    pendingBody?: string;
+    intentId?: string;
+  };
 }
 
 // What POST /voice/utterance returns (card 28).

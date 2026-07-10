@@ -5,6 +5,8 @@
   "scripts": {
     "typecheck": "bun run --filter '*' typecheck",
     "test": "bun test",
+    "build:hl2-lab": "bun run --cwd apps/hl2-lab build",
+    "test:hl2-lab": "bun test apps/hl2-lab/src",
     "lint": "biome check .",
     "format": "biome format --write ."
   },

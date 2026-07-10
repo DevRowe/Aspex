@@ -2,6 +2,7 @@ import {
   type VoiceContext,
   type VoiceResult,
   assertVoiceContext,
+  isValidIntentId,
 } from "@aspex/schema";
 import type { Hono } from "hono";
 import type { VoiceGatewayResult } from "../voice/gateway";
@@ -29,6 +30,7 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
       bytes: Uint8Array;
       mime: string;
       context: VoiceContext;
+      intentId?: string;
     };
 
     try {
@@ -36,6 +38,7 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
       const form = await c.req.formData();
       const audio = form.get("audio");
       const context = readVoiceContext(form.get("context"));
+      const intentId = readIntentId(form.get("intentId"));
 
       if (!isFileLike(audio)) {
         return c.json({ message: "Missing audio" }, 400);
@@ -45,6 +48,7 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
         bytes: new Uint8Array(await audio.arrayBuffer()),
         mime: audio.type,
         context,
+        ...(intentId !== undefined ? { intentId } : {}),
       };
     } catch (error) {
       return c.json({ message: validationMessage(error) }, 400);
@@ -54,6 +58,7 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
       request.bytes,
       request.mime,
       request.context,
+      request.intentId,
     );
     return c.json(cacheAudioResult(result, audioCache));
   });
@@ -86,6 +91,15 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
       request.context,
     );
     return c.json(cacheAudioResult(result, audioCache));
+  });
+
+  app.post("/voice/cancel", async (c) => {
+    if (deps.voiceGateway === undefined) {
+      return c.json({ error: "voice not configured" }, 503);
+    }
+    return c.json(
+      cacheAudioResult(await deps.voiceGateway.cancel(), audioCache),
+    );
   });
 
   app.get("/voice/audio/:id", (c) => {
@@ -135,6 +149,16 @@ function readVoiceContext(value: FormDataEntryValue | null): VoiceContext {
   const context = JSON.parse(value);
   assertVoiceContext(context);
   return context;
+}
+
+function readIntentId(value: FormDataEntryValue | null): string | undefined {
+  if (value === null) {
+    return undefined;
+  }
+  if (typeof value !== "string" || !isValidIntentId(value)) {
+    throw new Error("Invalid intentId");
+  }
+  return value;
 }
 
 function cleanupAudioCache(

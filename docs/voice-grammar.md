@@ -43,8 +43,7 @@ Every Utterance carries:
 
 Referent rules:
 
-- `read it`, `open it`, `approve`, `re-run`, `merge`, `comment`, `request changes`,
-  and `reject` require `selectedId`.
+- `read it`, `open it`, `approve`, `deny`, `answer`, `redirect`, `ship`, `re-run`, `merge`, `comment`, `request changes`, and `reject` require `selectedId`.
 - Action phrases must be present in the selected Item's `actions` list.
 - `focus <project>` is resolved by the Hub against exact project-name matches.
   No match returns `no_referent`. The shipped Hub selects the top matching
@@ -53,6 +52,7 @@ Referent rules:
   `ambiguous` if an injected resolver reports an ambiguous match.
 - `next` and `previous` move within the current needs-me list.
 - `what needs me` does not require a selected Item.
+- `dispatch <instruction>` and `status query` are referent-less orchestrator intents and do not require a selected Item.
 
 Phase 1 does not ship ordinal referents such as `the top one` or `the second`.
 
@@ -70,10 +70,17 @@ Phase 1 does not ship ordinal referents such as `the top one` or `the second`.
 | `open it` | `open` selected Item | Returns an `{ type: "open", id }` directive; the client opens the Item's `deepLink`. Read-back is `Opening <id>.` |
 | `open this` | `open` selected Item | Same as above. |
 | `approve` | `action` with `actionId: "approve"` | Dispatches unless the Item action requires confirmation. |
+| `deny` | `dictate` with `actionId: "deny"` | Dictates text and then arms when the live Action requires confirmation. |
+| `answer` | `dictate` with `actionId: "answer"` | Dictates text and dispatches only when the selected Item offers the Action. |
+| `redirect` | `dictate` with `actionId: "redirect"` | Dictates text and then arms when the live Action requires confirmation. |
+| `ship` / `review and ship` | `action` with `actionId: "ship"` | Arms when the live Action requires confirmation; it never merges from this utterance alone. |
+| `dispatch <instruction>` | referent-less `dispatch_task` | Always arms and requires a separate `confirm dispatch`; the resulting Item arrives through the world-model stream. |
+| `status` / `status query` | referent-less `status_query` | Calls the existing `/intents` status-query handler and returns its read-back. |
 | `re-run` | `action` with `actionId: "rerun"` | Dispatches unless the Item action requires confirmation. |
 | `re-run checks` | `action` with `actionId: "rerun"` | Same as above. |
 | `merge` | `action` with `actionId: "merge"` | Arms if `requiresConfirmation` is true. |
-| `confirm <verb>` | `confirm` pending action | Only works when `<verb>` maps to the current pending action. Shipped verbs are `approve`, `re-run`, `re-run checks`, and `merge`. |
+| `confirm <verb>` | `confirm` pending action | Only works when `<verb>` maps to the current pending action, including orchestrator verbs offered by the selected Item. |
+| `confirm dispatch` | `confirm_dispatch` | Delivers only the currently armed dispatch and reuses its original client `intentId`. |
 | `cancel` | `cancel` | Clears pending confirmation or Dictation mode. |
 | `never mind` | `cancel` | Same as above. |
 | `comment` | `dictate` with `actionId: "comment"` | Enters Dictation mode. |
@@ -91,6 +98,8 @@ pendingConfirm: {
   actionId: string;
   label: string;
   armedAt: string;
+  intentId?: string;
+  payload?: unknown;
 }
 ```
 
@@ -109,10 +118,14 @@ read, open, action, or dictation command clears it. A parser `no_match` leaves i
 in place. A mismatched recognized confirm returns `unknown_command` and clears
 it.
 
+A referent-less dispatch uses a sibling `pendingDispatch` record containing the client `intentId`, orchestrator, instruction, and `armedAt` time.
+The first dispatch utterance never calls the orchestrator, while `confirm dispatch` delivers exactly that stored intent.
+`POST /voice/cancel` clears either server-side arm without delivering an action or intent.
+
 ## Dictation
 
-`comment`, `request changes`, and `reject` enter Dictation mode for the selected
-Item. The prompt read-back is:
+`comment`, `request changes`, `reject`, `deny`, `answer`, and `redirect` enter Dictation mode for the selected Item.
+The prompt read-back is:
 
 ```text
 Dictate your <label>, then say 'post it'.
