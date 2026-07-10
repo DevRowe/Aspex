@@ -35,4 +35,17 @@ describe("voice open staging", () => {
       ["https://example.test/tasks/1", "_blank", "noopener,noreferrer"],
     ]);
   });
+
+  test("consumes the explicit open gesture when noopener returns null", () => {
+    const opened = openStagedItem(
+      {
+        id: "orchestrator:giles:lab-one",
+        label: "Task",
+        deepLink: "https://example.test/tasks/1",
+      },
+      (() => null) as typeof window.open,
+    );
+
+    expect(opened).toBe(true);
+  });
 });

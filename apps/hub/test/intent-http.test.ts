@@ -77,7 +77,7 @@ describe("hub HTTP intent route", () => {
     );
     const armedBody = await armed.json();
     const confirmed = await app.fetch(
-      jsonRequest("/intent", { text: "confirm approve", context }),
+      jsonRequest("/intent", { text: "confirm approve", context }, "2"),
     );
     const confirmedBody = await confirmed.json();
 
@@ -295,13 +295,13 @@ function fakeGateway(
   } as unknown as VoiceGateway;
 }
 
-function jsonRequest(path: string, body: unknown): Request {
+function jsonRequest(path: string, body: unknown, generation = "1"): Request {
   return new Request(`http://hub.test${path}`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "x-aspex-voice-session": "intent-http-test-1",
-      "x-aspex-voice-generation": "1",
+      "x-aspex-voice-generation": generation,
     },
     body: JSON.stringify(body),
   });

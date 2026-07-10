@@ -198,6 +198,67 @@ describe("VoiceGateway", () => {
     expect(confirmed.session).toEqual({});
   });
 
+  test("replays a ship generation without treating it as confirmation", async () => {
+    const { gateway, dispatchAction } = makeGateway([]);
+    const context = { selectedId: itemId, needsMeIds: [itemId] };
+
+    const armed = await gateway.handleText(
+      "ship",
+      context,
+      undefined,
+      "retrying-client",
+      1,
+    );
+    const replayed = await gateway.handleText(
+      "ship",
+      context,
+      undefined,
+      "retrying-client",
+      1,
+    );
+
+    expect(replayed).toEqual(armed);
+    expect(replayed.session.pendingConfirm?.actionId).toBe("ship");
+    expect(dispatchAction).not.toHaveBeenCalled();
+
+    await gateway.handleText("merge", context, undefined, "retrying-client", 2);
+    expect(dispatchAction).toHaveBeenCalledTimes(1);
+  });
+
+  test("coalesces an in-flight duplicate generation", async () => {
+    let completeTranscription: (transcript: Transcript) => void;
+    const transcription = new Promise<Transcript>((resolve) => {
+      completeTranscription = resolve;
+    });
+    const transcribe = mock(() => transcription);
+    const { gateway, dispatchAction } = makeGateway([], {
+      stt: { transcribe },
+    });
+    const context = { selectedId: itemId, needsMeIds: [itemId] };
+
+    const initial = gateway.handle(
+      audio,
+      "audio/webm",
+      context,
+      undefined,
+      "retrying-client",
+      1,
+    );
+    const replay = gateway.handle(
+      audio,
+      "audio/webm",
+      context,
+      undefined,
+      "retrying-client",
+      1,
+    );
+
+    expect(transcribe).toHaveBeenCalledTimes(1);
+    completeTranscription({ text: "ship", confidence: 1 });
+    expect(await replay).toEqual(await initial);
+    expect(dispatchAction).not.toHaveBeenCalled();
+  });
+
   test("comment prompts dictation, reads body back, then posts it", async () => {
     const { gateway, dispatchAction } = makeGateway([
       "comment",

@@ -68,7 +68,13 @@ interface ClientSession {
   session: VoiceSession;
   usedAt: number;
   generation: number;
+  result?: VoiceGatewayResult;
+  inFlight?: Promise<VoiceGatewayResult>;
 }
+
+type SessionRequest =
+  | { kind: "new"; session: VoiceSession }
+  | { kind: "replay"; result: Promise<VoiceGatewayResult> };
 
 export class VoiceGateway {
   private sessions = new Map<string, ClientSession>();
@@ -89,31 +95,30 @@ export class VoiceGateway {
     clientSessionId = "direct",
     generation = 0,
   ): Promise<VoiceGatewayResult> {
-    const session = this.sessionForRequest(clientSessionId, generation);
-    if (session === undefined) {
-      return this.cancelledResult();
-    }
-    let transcript: Transcript;
-    try {
-      transcript = await this.deps.stt.transcribe(audio, mime);
-    } catch {
-      if (!this.isRequestCurrent(clientSessionId, generation)) {
-        return this.cancelledResult();
+    return this.handleRequest(clientSessionId, generation, async (session) => {
+      let transcript: Transcript;
+      try {
+        transcript = await this.deps.stt.transcribe(audio, mime);
+      } catch {
+        if (!this.isRequestCurrent(clientSessionId, generation)) {
+          return this.cancelledResult();
+        }
+        return this.withAudio({
+          ok: false,
+          readback: "I couldn't hear that.",
+          session,
+        });
       }
-      return this.withAudio({
-        ok: false,
-        readback: "I couldn't hear that.",
-        session,
-      });
-    }
 
-    return this.runPipeline(
-      transcript,
-      context,
-      intentId,
-      clientSessionId,
-      generation,
-    );
+      return this.runPipeline(
+        transcript,
+        context,
+        session,
+        intentId,
+        clientSessionId,
+        generation,
+      );
+    });
   }
 
   async handleText(
@@ -123,12 +128,15 @@ export class VoiceGateway {
     clientSessionId = "direct",
     generation = 0,
   ): Promise<VoiceGatewayResult> {
-    return this.runPipeline(
-      { text, confidence: 1 },
-      context,
-      intentId,
-      clientSessionId,
-      generation,
+    return this.handleRequest(clientSessionId, generation, (session) =>
+      this.runPipeline(
+        { text, confidence: 1 },
+        context,
+        session,
+        intentId,
+        clientSessionId,
+        generation,
+      ),
     );
   }
 
@@ -136,29 +144,22 @@ export class VoiceGateway {
     clientSessionId = "direct",
     generation = 0,
   ): Promise<VoiceGatewayResult> {
-    this.pruneSessions();
-    const current = this.sessions.get(clientSessionId);
-    if (current === undefined || generation >= current.generation) {
-      this.storeSession(clientSessionId, {
-        session: {},
-        generation,
-        usedAt: this.now(),
-      });
-    }
-    return this.cancelledResult();
+    return this.handleRequest(clientSessionId, generation, async () => {
+      if (!this.commitSession(clientSessionId, generation, {})) {
+        return this.cancelledResult();
+      }
+      return this.cancelledResult();
+    });
   }
 
   private async runPipeline(
     transcript: Transcript,
     context: VoiceContext,
+    session: VoiceSession,
     intentId?: string,
     clientSessionId = "direct",
     generation = 0,
   ): Promise<VoiceGatewayResult> {
-    const session = this.sessionForRequest(clientSessionId, generation);
-    if (session === undefined) {
-      return this.cancelledResult();
-    }
     let provenance: IntentSource = "grammar";
     const selectedActions =
       context.selectedId === undefined
@@ -211,10 +212,30 @@ export class VoiceGateway {
     return this.withAudio({ ...effectResult, session: cloneSession(next) });
   }
 
+  private handleRequest(
+    clientSessionId: string,
+    generation: number,
+    run: (session: VoiceSession) => Promise<VoiceGatewayResult>,
+  ): Promise<VoiceGatewayResult> {
+    const request = this.sessionForRequest(clientSessionId, generation);
+    if (request === undefined) {
+      return this.cancelledResult();
+    }
+    if (request.kind === "replay") {
+      return request.result.then(cloneGatewayResult);
+    }
+
+    const result = run(request.session);
+    if (generation > 0) {
+      this.trackRequest(clientSessionId, generation, result);
+    }
+    return result;
+  }
+
   private sessionForRequest(
     clientSessionId: string,
     generation: number,
-  ): VoiceSession | undefined {
+  ): SessionRequest | undefined {
     this.pruneSessions();
     const current = this.sessions.get(clientSessionId);
     if (current === undefined) {
@@ -223,15 +244,66 @@ export class VoiceGateway {
         generation,
         usedAt: this.now(),
       });
-      return {};
+      return { kind: "new", session: {} };
     }
     if (generation < current.generation) {
       return undefined;
     }
+    if (generation > 0 && generation === current.generation) {
+      current.usedAt = this.now();
+      this.storeSession(clientSessionId, current);
+      if (current.result !== undefined) {
+        return { kind: "replay", result: Promise.resolve(current.result) };
+      }
+      if (current.inFlight !== undefined) {
+        return { kind: "replay", result: current.inFlight };
+      }
+      return undefined;
+    }
     current.generation = generation;
+    current.result = undefined;
+    current.inFlight = undefined;
     current.usedAt = this.now();
     this.storeSession(clientSessionId, current);
-    return cloneSession(current.session);
+    return { kind: "new", session: cloneSession(current.session) };
+  }
+
+  private trackRequest(
+    clientSessionId: string,
+    generation: number,
+    result: Promise<VoiceGatewayResult>,
+  ): void {
+    const current = this.sessions.get(clientSessionId);
+    if (current === undefined || current.generation !== generation) {
+      return;
+    }
+    current.inFlight = result;
+    current.usedAt = this.now();
+    this.storeSession(clientSessionId, current);
+    void result.then(
+      (completed) => {
+        const latest = this.sessions.get(clientSessionId);
+        if (
+          latest === undefined ||
+          latest.generation !== generation ||
+          latest.inFlight !== result
+        ) {
+          return;
+        }
+        latest.result = cloneGatewayResult(completed);
+        latest.inFlight = undefined;
+        latest.usedAt = this.now();
+        this.storeSession(clientSessionId, latest);
+      },
+      () => {
+        const latest = this.sessions.get(clientSessionId);
+        if (latest?.generation === generation && latest.inFlight === result) {
+          latest.inFlight = undefined;
+          latest.usedAt = this.now();
+          this.storeSession(clientSessionId, latest);
+        }
+      },
+    );
   }
 
   private commitSession(
@@ -484,6 +556,14 @@ function withConfirmed(payload: unknown): unknown {
   }
 
   return { confirmed: true };
+}
+
+function cloneGatewayResult(result: VoiceGatewayResult): VoiceGatewayResult {
+  return {
+    ...result,
+    session: cloneSession(result.session),
+    ...(result.audio !== undefined ? { audio: result.audio.slice() } : {}),
+  };
 }
 
 function dictationLabel(actionId: string): string {

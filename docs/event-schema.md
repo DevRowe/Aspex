@@ -416,7 +416,13 @@ into the payload so the owning orchestrator reuses it as the inbox filename
 
 All stateful voice requests (`/voice/utterance`, `/intent`, and `/voice/cancel`)
 also require an `X-Aspex-Voice-Session` header containing a client-generated,
-filename-safe session identifier.
+filename-safe session identifier and an `X-Aspex-Voice-Generation` header
+containing a positive safe integer.
+Generations increase monotonically within each retained session.
+The Hub replays the original response for an exact generation retry while that
+session is retained, without advancing confirmation, dispatch, or dictation
+state.
+Older generations return a cancelled result without changing state.
 The Hub keeps confirmation, dispatch, and dictation state isolated to that
 identifier.
 

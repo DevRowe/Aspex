@@ -27,5 +27,6 @@ export function openStagedItem(
   pending: PendingOpen,
   openWindow: OpenWindow,
 ): boolean {
-  return openWindow(pending.deepLink, "_blank", "noopener,noreferrer") !== null;
+  openWindow(pending.deepLink, "_blank", "noopener,noreferrer");
+  return true;
 }
