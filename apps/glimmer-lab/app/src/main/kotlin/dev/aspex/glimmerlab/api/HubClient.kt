@@ -1,6 +1,8 @@
 package dev.aspex.glimmerlab.api
 
 import java.io.IOException
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -125,7 +127,7 @@ class HubClient(
             put("intentId", intentId)
             if (confirmed) put("confirmed", true)
         }
-        val httpRequest = request("/actions/$itemId/$actionId")
+        val httpRequest = request(actionPath(itemId, actionId))
             .post(body.toString().toRequestBody(jsonMediaType))
             .build()
 
@@ -171,6 +173,19 @@ class HubClient(
         )
     }
 }
+
+/**
+ * Builds the `/actions/:itemId/:actionId` path with each id percent-encoded
+ * as its own segment, mirroring the other clients' `encodeURIComponent`
+ * (apps/web `hubClient.ts`, apps/hl2-lab `direction.ts`): GitHub item ids
+ * contain `/` (owner/repo), which would otherwise split into an extra path
+ * segment and 404 on the Hub's route.
+ */
+internal fun actionPath(itemId: String, actionId: String): String =
+    "/actions/${encodePathSegment(itemId)}/${encodePathSegment(actionId)}"
+
+private fun encodePathSegment(value: String): String =
+    URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20")
 
 private suspend fun Call.await(): Pair<Int, String> =
     suspendCancellableCoroutine { continuation ->
