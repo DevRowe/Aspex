@@ -145,7 +145,7 @@ Run the desktop simulator with `bun run --cwd apps/xr-lab dev`, type-check it wi
 ## AI Glasses Glimmer lab
 
 The Android client in `apps/glimmer-lab` is the glance-tier sibling of the HL2 lab: a phone-resident Compose Glimmer + Jetpack Projected prototype that renders the top attention item as a glanceable card on the Android XR AI Glasses emulator, against the real Hub HTTP/SSE API.
-It is the monorepo's first non-Bun component - a self-contained Gradle project, not part of the Bun workspace or `bun test`.
+It is the monorepo's first non-Bun app - a self-contained Gradle project, not part of the Bun workspace or `bun test`.
 SDK setup, emulator setup, run steps, and the verification runbook live in [apps/glimmer-lab/README.md](apps/glimmer-lab/README.md).
 
 ## Hub API auth

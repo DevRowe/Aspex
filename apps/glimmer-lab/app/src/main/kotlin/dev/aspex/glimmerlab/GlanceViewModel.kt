@@ -9,6 +9,7 @@ import dev.aspex.glimmerlab.api.HubClient
 import dev.aspex.glimmerlab.api.HubEvent
 import dev.aspex.glimmerlab.api.StatusQueryOutcome
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -67,35 +68,48 @@ class GlanceViewModel(
     private suspend fun streamForever() {
         var backoffMs = 1_000L
         while (true) {
-            client.stateStream().collect { event ->
-                when (event) {
-                    is HubEvent.Connected -> {
-                        backoffMs = 1_000L
-                        _uiState.update {
-                            it.copy(connection = ConnectionState.LIVE, disconnectReason = null)
+            try {
+                client.stateStream().collect { event ->
+                    when (event) {
+                        is HubEvent.Connected -> {
+                            backoffMs = 1_000L
+                            _uiState.update {
+                                it.copy(connection = ConnectionState.LIVE, disconnectReason = null)
+                            }
+                        }
+
+                        is HubEvent.Snapshot -> _uiState.update {
+                            val top = event.state.needsMe.firstOrNull()
+                            it.copy(
+                                top = top,
+                                needsMeCount = event.state.needsMe.size,
+                                // Drop a pending confirmation whenever its item is
+                                // no longer needsMe[0]: on a one-card surface the
+                                // visible card IS the referent, so a confirmation
+                                // is only valid while its item is the rendered top
+                                // item.
+                                confirm = when (val confirm = it.confirm) {
+                                    is ConfirmFlow.AwaitingConfirmation ->
+                                        if (confirm.item.id == top?.id) confirm else ConfirmFlow.Idle
+
+                                    else -> confirm
+                                },
+                            )
+                        }
+
+                        is HubEvent.Disconnected -> _uiState.update {
+                            it.copy(connection = ConnectionState.LOST, disconnectReason = event.reason)
                         }
                     }
-
-                    is HubEvent.Snapshot -> _uiState.update {
-                        val top = event.state.needsMe.firstOrNull()
-                        it.copy(
-                            top = top,
-                            needsMeCount = event.state.needsMe.size,
-                            // Drop a pending confirmation if its item left the
-                            // inbox; confirming a stale referent is worse than
-                            // asking again.
-                            confirm = when (val confirm = it.confirm) {
-                                is ConfirmFlow.AwaitingConfirmation ->
-                                    if (confirm.item.id == top?.id) confirm else ConfirmFlow.Idle
-
-                                else -> confirm
-                            },
-                        )
-                    }
-
-                    is HubEvent.Disconnected -> _uiState.update {
-                        it.copy(connection = ConnectionState.LOST, disconnectReason = event.reason)
-                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        connection = ConnectionState.LOST,
+                        disconnectReason = e.message ?: e.javaClass.simpleName,
+                    )
                 }
             }
 
