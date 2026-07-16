@@ -27,6 +27,7 @@ The Hub-side half of the Aspex-orchestrator protocol (design report: giles task 
 - Bun workspace. `bun install`, then `bun run typecheck`, `bun test`, `bun run lint` (biome). CI runs exactly these plus a Python voice-server mock contract.
 - `noUncheckedIndexedAccess` is on; index and regex-group access is possibly-undefined.
 - **Shared primitives live in `@aspex/schema`.** Payload guards/extractors (`isRecord`, `stringField`, `trimmedStringField`, `stringAt`, `projectFromCwd`, `errorMessage`) are in `packages/schema/src/guards.ts`, and all item-id constructors in `packages/schema/src/ids.ts`; import these instead of redefining them in an adapter or hub module.
+- **Hub config is one zod v4 schema** (`apps/hub/src/config.ts`): defaults live inline via `.default()`/`.prefault()`, env vars map through its `ENV_OVERRIDES` table, and boot errors are formatted from ZodError paths - extend the schema and table there instead of adding hand-rolled parsers or `DEFAULT_*` constants.
 - Long Markdown docs are written one sentence per line.
 - **XR lab commands.** `apps/xr-lab` is an unsupported, lab-only, device-neutral WebXR design instrument (Android XR primary target, HL2 demoted to a wear-test jig), never a product target or a legacy-cockpit extension; use `bun run --cwd apps/xr-lab dev`, `bun run build:xr-lab`, and `bun run test:xr-lab`, with capability-gated input in `apps/xr-lab/src/capabilities.ts` and on-device pairing and wear-test notes in `docs/xr-lab.md`.
 

@@ -10,6 +10,7 @@
   },
   "files": {
     "ignore": [
+      ".claude/settings.local.json",
       "apps/web/dist/**",
       "apps/xr-lab/dist/**",
       "**/target/**",
