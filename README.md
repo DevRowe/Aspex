@@ -31,14 +31,13 @@ Text at code size is not readable on today's glasses, so everything wearer-facin
 **Topology: Hub on the dev box, glasses over a private tailnet next.**
 The Hub runs on the same machine as your agents, holds the world-model, and stays local-first - no cloud relay in the MVP.
 By default the Hub binds `127.0.0.1` and the browser CORS allowlist is localhost/Tauri-only, so out-of-the-box access is same-machine.
-To let glasses reach it over a private [Tailscale](https://tailscale.com)-style tailnet, set the bind address (`hubBind` in config or `ASPEX_HUB_BIND`, e.g. the dev box's tailnet address) and, for a browser client such as the HL2 Edge lab client, one extra exact CORS origin (`corsOrigin` or `ASPEX_HUB_CORS_ORIGIN`).
+To let glasses reach it over a private [Tailscale](https://tailscale.com)-style tailnet, set the bind address (`hubBind` in config or `ASPEX_HUB_BIND`, e.g. the dev box's tailnet address) and, for a browser client such as the XR lab client, one extra exact CORS origin (`corsOrigin` or `ASPEX_HUB_CORS_ORIGIN`).
 Every endpoint requires the local auth token, so the API is not wide open when that tailnet reachability is enabled (see [Hub API auth](#hub-api-auth)).
 
 **Two client tracks: lab first.**
 
-- **Lab track (throwaway):** a WebXR client in HoloLens 2's Edge browser.
-  An HL2 has articulated hand tracking, voice, and waveguides - an Aura-class simulator available years early.
-  This code is a design instrument, never load-bearing, never a supported target; HL2 is a discontinued platform.
+- **Lab track (throwaway):** a device-neutral WebXR client (`apps/xr-lab`) with Android XR as the primary target; HoloLens 2 remains a device it still runs on and the owner's wear-test jig.
+  This code is a design instrument, never load-bearing, never a supported target.
 - **Product track:** an Android XR-ready glance-tier app - phone plus today's glasses as the display now, spatial tier on Aura-class hardware later.
 
 **Posture: open protocol, open reference stack, demo-first.**
@@ -262,7 +261,7 @@ New work should not build on them; the client future is the AR tracks above.
   The React cockpit and Tauri desktop shell (ADR-0007, ADR-0008) are a
   flat-screen skin over the Hub.
   They still run against the Hub for development, but the display target is now
-  the two client tracks (HL2 WebXR lab, Android XR product), and the cockpit is
+  the two client tracks (device-neutral WebXR lab, Android XR product), and the cockpit is
   no longer the product surface.
   The retained desktop shell and web client present the Hub API token through
   the Tauri `hub_token` command and browser `Authorization` headers (including

@@ -40,7 +40,7 @@ export interface ServerDeps {
   // Local bearer token required on every endpoint (ADR-0023). When omitted the
   // app is unauthenticated; the Hub boot path always supplies one.
   authToken?: string;
-  // One extra exact origin allowed by CORS (the HL2 Edge client), alongside
+  // One extra exact origin allowed by CORS (the XR lab client), alongside
   // the built-in tauri://localhost and http://localhost:*.
   corsOrigin?: string;
   dispatchAction: (
