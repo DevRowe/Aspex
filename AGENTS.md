@@ -32,7 +32,7 @@ The Hub-side half of the Aspex-orchestrator protocol (design report: giles task 
 
 ## Sharp edges
 
-- **Hub API auth (ADR-0023).** Every HTTP/SSE endpoint requires a local bearer token; the Hub generates one into `~/.aspex/config.json` on first boot or reads `ASPEX_HUB_TOKEN`. Clients send `Authorization: Bearer`; the SSE stream also accepts `?token=` (EventSource cannot set headers). `POST /webhooks/cursor` is the one exemption (own HMAC, ADR-0022). Local callers (`aspex hook-relay`, the claude-code relay) must present the token. `buildApp` enforces only when `authToken` is set, so most tests run unauthenticated; the real boot path always supplies one.
+- **Hub API auth (ADR-0023).** Every HTTP/SSE endpoint requires a local bearer token; the Hub generates one into `~/.aspex/config.json` on first boot or reads `ASPEX_HUB_TOKEN`. Clients send `Authorization: Bearer` everywhere, including the SSE stream (both first-party clients use fetch-based SSE via `eventsource-parser`); the stream's `?token=` query is deprecated - it survives only as the native-EventSource escape hatch until after the owner's on-device wear test. `POST /webhooks/cursor` is the one exemption (own HMAC, ADR-0022). Local callers (`aspex hook-relay`, the claude-code relay) must present the token. `buildApp` enforces only when `authToken` is set, so most tests run unauthenticated; the real boot path always supplies one.
 - **Sidecar binaries are build artifacts.** `apps/desktop/src-tauri/binaries/` is gitignored (except its README); never commit compiled Hub sidecars (`bun build --compile`). A 95 MB `.exe` was removed from the tip but still lives in history - rewriting it out is a separate owner-approved op.
 
 ## Maintaining this file

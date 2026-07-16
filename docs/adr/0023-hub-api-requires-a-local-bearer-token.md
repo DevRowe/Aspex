@@ -22,4 +22,7 @@ Any peer on the tailnet could otherwise read the world-model, dispatch actions, 
 
 We rejected **waiting to add auth until the bind opens** (the tailnet is the whole point of the target topology, and adding the token first prevents a wide-open API the moment remote reachability lands), **mTLS or an OAuth/session system** (real infrastructure and UX for a single-user local tool - over-built for the threat, and reversible later if a genuine multi-user need appears), and **exempting `/health`** (a tailnet peer reading version and liveness would be a small but needless leak once the bind opens; uniform enforcement is simpler to reason about).
 The cost is that every client - including the forthcoming AR clients and the legacy desktop cockpit - must carry the token.
-The retained desktop shell and web client do that through the Tauri `hub_token` command, browser `Authorization` headers, and SSE `?token=` stream URLs, even though the cockpit remains a legacy surface rather than the north-star client.
+The retained desktop shell and web client do that through the Tauri `hub_token` command and browser `Authorization` headers, even though the cockpit remains a legacy surface rather than the north-star client.
+
+**Amendment (2026-07-17).** Both first-party clients now stream over fetch-based SSE (`eventsource-parser`) and send `Authorization: Bearer` on the stream too.
+The `?token=` query parameter remains accepted but is deprecated: it survives only as the escape hatch for native `EventSource` clients, and its removal is deferred until after the owner's on-device wear test.

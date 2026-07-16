@@ -153,13 +153,8 @@ When you supply `ASPEX_HUB_TOKEN`, make the same environment variable available
 to every local caller that must reach the Hub, such as `aspex hook-relay`,
 because the token is intentionally not persisted for them to read.
 
-Clients present it two ways:
-
-- **Most endpoints:** an `Authorization: Bearer <token>` header.
-- **The SSE stream:** a `?token=<token>` query parameter, because the browser
-  `EventSource` API cannot set request headers.
-  The query-parameter path is the documented tradeoff for SSE and is otherwise
-  equivalent to the header.
+Clients present it as an `Authorization: Bearer <token>` header on every endpoint, including the SSE stream (both first-party clients stream over fetch-based SSE).
+The stream also still accepts a `?token=<token>` query parameter, but that form is deprecated: it survives only as the escape hatch for native `EventSource` clients, which cannot set request headers, and its removal is deferred until after the owner's on-device wear test.
 
 The one exception is `POST /webhooks/cursor`: it authenticates with its own
 per-request HMAC signature (ADR-0022) because it is reached by Cursor's cloud,
@@ -269,8 +264,8 @@ New work should not build on them; the client future is the AR tracks above.
   the two client tracks (HL2 WebXR lab, Android XR product), and the cockpit is
   no longer the product surface.
   The retained desktop shell and web client present the Hub API token through
-  the Tauri `hub_token` command, browser `Authorization` headers, and SSE
-  `?token=` stream URLs so the legacy path still works while deprecated.
+  the Tauri `hub_token` command and browser `Authorization` headers (including
+  on the fetch-based SSE stream) so the legacy path still works while deprecated.
 
 - **Preview Deck (removed).**
   The Preview Deck (ADR-0014 through ADR-0017) booted disposable,

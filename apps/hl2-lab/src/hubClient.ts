@@ -1,3 +1,4 @@
+import { type EventSourceMessage, createParser } from "eventsource-parser";
 import {
   type ConnectionState,
   type RankedState,
@@ -9,16 +10,8 @@ export interface HubConnectionConfig {
   token: string;
 }
 
-interface EventSourceLike {
-  onopen: ((event: Event) => void) | null;
-  onerror: ((event: Event) => void) | null;
-  addEventListener(type: string, listener: EventListener): void;
-  close(): void;
-}
-
 export interface HubClientDeps {
   fetcher?: Fetcher;
-  eventSource?: (url: string) => EventSourceLike;
   now?: () => number;
   online?: () => boolean;
   setTimer?: (
@@ -43,14 +36,13 @@ const RECONNECT_DELAYS = [1_000, 2_000, 4_000, 8_000, 15_000] as const;
 const STALE_AFTER_MS = 30_000;
 
 export class HubClient {
-  private stream: EventSourceLike | null = null;
+  private streamAbort: AbortController | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private stopped = true;
   private generation = 0;
   private attempt = 0;
   private lastStateAt: number | undefined;
   private readonly fetcher: Fetcher;
-  private readonly eventSource: (url: string) => EventSourceLike;
   private readonly now: () => number;
   private readonly online: () => boolean;
   private readonly setTimer: NonNullable<HubClientDeps["setTimer"]>;
@@ -63,7 +55,6 @@ export class HubClient {
   ) {
     this.fetcher =
       deps.fetcher ?? ((input, init) => globalThis.fetch(input, init));
-    this.eventSource = deps.eventSource ?? ((url) => new EventSource(url));
     this.now = deps.now ?? (() => Date.now());
     this.online = deps.online ?? (() => navigator.onLine !== false);
     this.setTimer =
@@ -88,8 +79,8 @@ export class HubClient {
   stop(): void {
     this.stopped = true;
     this.generation += 1;
-    this.stream?.close();
-    this.stream = null;
+    this.streamAbort?.abort();
+    this.streamAbort = null;
     if (this.retryTimer !== undefined) {
       this.clearTimer(this.retryTimer);
       this.retryTimer = undefined;
@@ -153,48 +144,103 @@ export class HubClient {
     if (!this.isCurrent(generation)) {
       return;
     }
-    const streamUrl = new URL(`${trimUrl(cfg.hubUrl)}/stream`);
-    streamUrl.searchParams.set("token", cfg.token);
-    const stream = this.eventSource(streamUrl.toString());
-    if (!this.isCurrent(generation)) {
-      stream.close();
+    const controller = new AbortController();
+    this.streamAbort = controller;
+    let streamResponse: Response;
+    try {
+      streamResponse = await this.fetcher(`${trimUrl(cfg.hubUrl)}/stream`, {
+        headers: {
+          authorization: `Bearer ${cfg.token}`,
+          accept: "text/event-stream",
+        },
+        cache: "no-store",
+        signal: controller.signal,
+      });
+    } catch {
+      if (!this.isCurrentStream(generation, controller)) {
+        return;
+      }
+      this.streamAbort = null;
+      this.scheduleReconnect(generation, "Hub stream interrupted.");
       return;
     }
-    this.stream = stream;
-    stream.addEventListener("state", ((event: MessageEvent<string>) => {
-      if (!this.isCurrentStream(generation, stream)) {
+    if (!this.isCurrentStream(generation, controller)) {
+      controller.abort();
+      return;
+    }
+    if (streamResponse.status === 401 || streamResponse.status === 403) {
+      controller.abort();
+      this.streamAbort = null;
+      this.emit("auth_failed", "Hub rejected the bearer token.");
+      return;
+    }
+    if (!streamResponse.ok || streamResponse.body === null) {
+      controller.abort();
+      this.streamAbort = null;
+      this.scheduleReconnect(
+        generation,
+        `Hub stream failed with HTTP ${streamResponse.status}.`,
+      );
+      return;
+    }
+
+    this.attempt = 0;
+    this.emit("live", "Authenticated stream connected.");
+    try {
+      await this.readStream(streamResponse.body, generation, controller);
+    } catch {
+      // Aborted or the transport dropped; reconnect below if still current.
+    }
+    if (!this.isCurrentStream(generation, controller)) {
+      return;
+    }
+    this.streamAbort = null;
+    this.scheduleReconnect(generation, "Hub stream interrupted.");
+  }
+
+  private async readStream(
+    body: ReadableStream<Uint8Array>,
+    generation: number,
+    controller: AbortController,
+  ): Promise<void> {
+    const parser = createParser({
+      onEvent: (message) =>
+        this.handleStreamEvent(message, generation, controller),
+    });
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done || !this.isCurrentStream(generation, controller)) {
         return;
       }
-      try {
-        this.acceptState(parseRankedState(JSON.parse(event.data) as unknown));
-        this.emit("live", "Authenticated stream connected.");
-      } catch (error) {
-        if (!this.isCurrentStream(generation, stream)) {
-          return;
-        }
-        const message =
-          error instanceof Error ? error.message : "Malformed Hub stream event";
-        this.events.onMalformed(message);
-        this.emit("malformed", message);
-      }
-    }) as EventListener);
-    stream.onopen = () => {
-      if (!this.isCurrentStream(generation, stream)) {
-        return;
-      }
-      this.attempt = 0;
+      parser.feed(decoder.decode(value, { stream: true }));
+    }
+  }
+
+  private handleStreamEvent(
+    message: EventSourceMessage,
+    generation: number,
+    controller: AbortController,
+  ): void {
+    if (!this.isCurrentStream(generation, controller)) {
+      return;
+    }
+    if (message.event !== "state") {
+      return;
+    }
+    try {
+      this.acceptState(parseRankedState(JSON.parse(message.data) as unknown));
       this.emit("live", "Authenticated stream connected.");
-    };
-    stream.onerror = () => {
-      if (!this.isCurrentStream(generation, stream)) {
+    } catch (error) {
+      if (!this.isCurrentStream(generation, controller)) {
         return;
       }
-      stream.close();
-      if (this.stream === stream) {
-        this.stream = null;
-      }
-      this.scheduleReconnect(generation, "Hub stream interrupted.");
-    };
+      const detail =
+        error instanceof Error ? error.message : "Malformed Hub stream event";
+      this.events.onMalformed(detail);
+      this.emit("malformed", detail);
+    }
   }
 
   private isCurrent(generation: number): boolean {
@@ -203,9 +249,9 @@ export class HubClient {
 
   private isCurrentStream(
     generation: number,
-    stream: EventSourceLike,
+    controller: AbortController,
   ): boolean {
-    return this.isCurrent(generation) && this.stream === stream;
+    return this.isCurrent(generation) && this.streamAbort === controller;
   }
 
   private acceptState(state: RankedState): void {

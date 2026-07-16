@@ -1,8 +1,10 @@
+import { type EventSourceMessage, createParser } from "eventsource-parser";
 import { useStore } from "../store";
 import type { ActionResult } from "../types";
 import type { RankedState } from "../types";
 
 const DEFAULT_HUB_URL = "http://127.0.0.1:4317";
+const STREAM_RETRY_MS = 3_000;
 let hubUrl: Promise<string> | undefined;
 
 interface TauriGlobals {
@@ -13,6 +15,10 @@ interface TauriGlobals {
   };
 }
 
+export interface HubStream {
+  close(): void;
+}
+
 export interface HubClientConfig {
   intentEnabled?: boolean;
   intent?: {
@@ -20,27 +26,86 @@ export interface HubClientConfig {
   };
 }
 
-export async function connect(): Promise<EventSource> {
+export async function connect(): Promise<HubStream> {
   const hub = await getHubUrl();
-  const token = await getHubToken();
-  const streamUrl = new URL(`${hub}/stream`);
+  let closed = false;
+  let abort: AbortController | undefined;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  let retryResolve: (() => void) | undefined;
 
-  if (token !== undefined) {
-    streamUrl.searchParams.set("token", token);
-  }
+  const handleEvent = (message: EventSourceMessage): void => {
+    try {
+      if (message.event === "state") {
+        useStore.getState().setState(JSON.parse(message.data) as RankedState);
+      }
+      // Unknown event types are tolerated and ignored.
+    } catch (error) {
+      // A malformed event must not tear down the stream.
+      console.warn("Ignoring malformed Hub stream event", error);
+    }
+  };
 
-  const stream = new EventSource(streamUrl.toString());
+  const run = async (): Promise<void> => {
+    while (!closed) {
+      const controller = new AbortController();
+      abort = controller;
+      try {
+        const response = await hubFetch(`${hub}/stream`, {
+          headers: { accept: "text/event-stream" },
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (response.status === 401 || response.status === 403) {
+          console.error(
+            `Hub stream rejected the bearer token with HTTP ${response.status}; not retrying until reconnected.`,
+          );
+          return;
+        }
+        if (!response.ok || response.body === null) {
+          throw new Error(`Hub stream failed with HTTP ${response.status}`);
+        }
+        useStore.getState().setConnected(true);
+        const parser = createParser({ onEvent: handleEvent });
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done || closed) {
+            break;
+          }
+          parser.feed(decoder.decode(value, { stream: true }));
+        }
+      } catch {
+        // Unreachable Hub or aborted stream; fall through to reconnect.
+      } finally {
+        controller.abort();
+        useStore.getState().setConnected(false);
+      }
+      if (closed) {
+        return;
+      }
+      await new Promise<void>((resolve) => {
+        retryResolve = resolve;
+        retryTimer = setTimeout(resolve, STREAM_RETRY_MS);
+      });
+      retryTimer = undefined;
+      retryResolve = undefined;
+    }
+  };
+  void run();
 
-  stream.addEventListener("state", (event) => {
-    const state = JSON.parse(
-      (event as MessageEvent<string>).data,
-    ) as RankedState;
-    useStore.getState().setState(state);
-  });
-  stream.onopen = () => useStore.getState().setConnected(true);
-  stream.onerror = () => useStore.getState().setConnected(false);
-
-  return stream;
+  return {
+    close(): void {
+      closed = true;
+      abort?.abort();
+      if (retryTimer !== undefined) {
+        clearTimeout(retryTimer);
+        retryTimer = undefined;
+      }
+      retryResolve?.();
+      retryResolve = undefined;
+    },
+  };
 }
 
 export async function runAction(

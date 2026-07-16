@@ -1,11 +1,11 @@
 import { useEffect } from "react";
 import { Inbox } from "./components/Inbox";
-import { connect } from "./lib/hubClient";
+import { type HubStream, connect } from "./lib/hubClient";
 
 export function App() {
   useEffect(() => {
     let disposed = false;
-    let stream: EventSource | undefined;
+    let stream: HubStream | undefined;
 
     void connect().then((nextStream) => {
       if (disposed) {

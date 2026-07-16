@@ -2,198 +2,242 @@ import { describe, expect, test } from "bun:test";
 import { HubClient } from "./hubClient";
 import { ranked } from "./testFixtures";
 
-class FakeEventSource {
-  onopen: ((event: Event) => void) | null = null;
-  onerror: ((event: Event) => void) | null = null;
-  closed = false;
-  listeners = new Map<string, EventListener>();
+const encoder = new TextEncoder();
 
-  addEventListener(type: string, listener: EventListener): void {
-    this.listeners.set(type, listener);
+class FakeSseStream {
+  private controller!: ReadableStreamDefaultController<Uint8Array>;
+  readonly body = new ReadableStream<Uint8Array>({
+    start: (controller) => {
+      this.controller = controller;
+    },
+  });
+
+  event(type: string, value: unknown): void {
+    this.raw(`event: ${type}\ndata: ${JSON.stringify(value)}\n\n`);
+  }
+
+  raw(chunk: string): void {
+    this.controller.enqueue(encoder.encode(chunk));
   }
 
   close(): void {
-    this.closed = true;
-  }
-
-  state(value: unknown): void {
-    this.listeners.get("state")?.(
-      new MessageEvent("state", { data: JSON.stringify(value) }),
-    );
+    this.controller.close();
   }
 }
 
-describe("HubClient", () => {
-  test("hydrates with bearer auth before opening an in-memory tokenized SSE URL", async () => {
-    let request: Request | undefined;
-    let streamUrl = "";
-    const stream = new FakeEventSource();
-    const states: unknown[] = [];
-    const phases: string[] = [];
-    const client = new HubClient(
-      () => ({ hubUrl: "https://hub.tailnet.test/", token: "secret-token" }),
-      {
-        onState: (state) => states.push(state),
-        onConnection: (state) => phases.push(state.phase),
-        onMalformed: () => undefined,
-      },
-      {
-        fetcher: ((input, init) => {
-          request = new Request(input, init);
-          return Promise.resolve(Response.json(ranked()));
-        }) as typeof fetch,
-        eventSource: (url) => {
-          streamUrl = url;
-          return stream;
-        },
-      },
-    );
+interface Harness {
+  client: HubClient;
+  requests: Request[];
+  streams: FakeSseStream[];
+  timers: Array<() => void>;
+  states: unknown[];
+  phases: string[];
+  malformed: string[];
+}
 
-    client.start();
+function harness(
+  overrides: {
+    stateResponse?: () => Promise<Response>;
+    streamResponse?: () => Promise<Response>;
+  } = {},
+): Harness {
+  const requests: Request[] = [];
+  const streams: FakeSseStream[] = [];
+  const timers: Array<() => void> = [];
+  const states: unknown[] = [];
+  const phases: string[] = [];
+  const malformed: string[] = [];
+  const client = new HubClient(
+    () => ({ hubUrl: "https://hub.tailnet.test/", token: "secret-token" }),
+    {
+      onState: (state) => states.push(state),
+      onConnection: (state) => phases.push(state.phase),
+      onMalformed: (message) => malformed.push(message),
+    },
+    {
+      fetcher: (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        if (request.url.endsWith("/state")) {
+          return (
+            overrides.stateResponse?.() ??
+            Promise.resolve(Response.json(ranked()))
+          );
+        }
+        if (overrides.streamResponse !== undefined) {
+          return overrides.streamResponse();
+        }
+        const stream = new FakeSseStream();
+        streams.push(stream);
+        return Promise.resolve(
+          new Response(stream.body, {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          }),
+        );
+      },
+      setTimer: (callback) => {
+        timers.push(callback);
+        return timers.length as unknown as ReturnType<typeof setTimeout>;
+      },
+      clearTimer: () => undefined,
+    },
+  );
+  return { client, requests, streams, timers, states, phases, malformed };
+}
+
+describe("HubClient", () => {
+  test("hydrates and streams with bearer auth, never a token query", async () => {
+    const h = harness();
+    h.client.start();
     await tick();
 
-    expect(request?.url).toBe("https://hub.tailnet.test/state");
-    expect(request?.headers.get("authorization")).toBe("Bearer secret-token");
-    expect(streamUrl).toBe(
-      "https://hub.tailnet.test/stream?token=secret-token",
-    );
-    expect(states).toHaveLength(1);
-    stream.onopen?.(new Event("open"));
-    expect(phases.at(-1)).toBe("live");
+    expect(h.requests.map((request) => request.url)).toEqual([
+      "https://hub.tailnet.test/state",
+      "https://hub.tailnet.test/stream",
+    ]);
+    for (const request of h.requests) {
+      expect(request.headers.get("authorization")).toBe("Bearer secret-token");
+      expect(request.url).not.toContain("token=");
+    }
+    expect(h.requests[1]?.headers.get("accept")).toBe("text/event-stream");
+    expect(h.states).toHaveLength(1);
+    expect(h.phases.at(-1)).toBe("live");
+
+    h.streams[0]?.event("state", ranked());
+    await tick();
+    expect(h.states).toHaveLength(2);
+  });
+
+  test("parses multi-line and chunk-split SSE frames", async () => {
+    const h = harness();
+    h.client.start();
+    await tick();
+
+    const payload = JSON.stringify(ranked());
+    const frame = `event: state\ndata: ${payload}\n\n`;
+    h.streams[0]?.raw(frame.slice(0, 12));
+    await tick();
+    expect(h.states).toHaveLength(1);
+    h.streams[0]?.raw(frame.slice(12));
+    await tick();
+    expect(h.states).toHaveLength(2);
+  });
+
+  test("ignores unknown event types and comments", async () => {
+    const h = harness();
+    h.client.start();
+    await tick();
+
+    h.streams[0]?.raw(": heartbeat\n\n");
+    h.streams[0]?.event("preview", { anything: true });
+    h.streams[0]?.event("totally-new", { anything: true });
+    await tick();
+
+    expect(h.states).toHaveLength(1);
+    expect(h.malformed).toEqual([]);
+    expect(h.phases.at(-1)).toBe("live");
   });
 
   test("reports auth failure without opening a stream", async () => {
-    let opened = false;
-    const phases: string[] = [];
-    const client = new HubClient(
-      () => ({ hubUrl: "https://hub.test", token: "bad" }),
-      {
-        onState: () => undefined,
-        onConnection: (state) => phases.push(state.phase),
-        onMalformed: () => undefined,
-      },
-      {
-        fetcher: (() =>
-          Promise.resolve(
-            new Response(null, { status: 401 }),
-          )) as unknown as typeof fetch,
-        eventSource: () => {
-          opened = true;
-          return new FakeEventSource();
-        },
-      },
-    );
-    client.start();
+    const h = harness({
+      stateResponse: () => Promise.resolve(new Response(null, { status: 401 })),
+    });
+    h.client.start();
     await tick();
-    expect(opened).toBe(false);
-    expect(phases.at(-1)).toBe("auth_failed");
+    expect(h.requests).toHaveLength(1);
+    expect(h.phases.at(-1)).toBe("auth_failed");
+  });
+
+  test("reports auth failure when the stream itself is rejected", async () => {
+    const h = harness({
+      streamResponse: () =>
+        Promise.resolve(new Response(null, { status: 401 })),
+    });
+    h.client.start();
+    await tick();
+    expect(h.phases.at(-1)).toBe("auth_failed");
+    expect(h.timers).toHaveLength(0);
   });
 
   test("preserves prior state, reports malformed events, and reconnects with backoff", async () => {
-    const streams: FakeEventSource[] = [];
-    const timers: Array<() => void> = [];
-    const malformed: string[] = [];
-    const states: unknown[] = [];
-    const client = new HubClient(
-      () => ({ hubUrl: "https://hub.test", token: "token" }),
-      {
-        onState: (state) => states.push(state),
-        onConnection: () => undefined,
-        onMalformed: (message) => malformed.push(message),
-      },
-      {
-        fetcher: (() =>
-          Promise.resolve(Response.json(ranked()))) as unknown as typeof fetch,
-        eventSource: () => {
-          const stream = new FakeEventSource();
-          streams.push(stream);
-          return stream;
-        },
-        setTimer: (callback) => {
-          timers.push(callback);
-          return timers.length as unknown as ReturnType<typeof setTimeout>;
-        },
-        clearTimer: () => undefined,
-      },
-    );
-
-    client.start();
+    const h = harness();
+    h.client.start();
     await tick();
-    streams[0]?.state({ nope: true });
-    expect(malformed).toHaveLength(1);
-    expect(states).toHaveLength(1);
-
-    streams[0]?.onerror?.(new Event("error"));
-    expect(timers).toHaveLength(1);
-    timers[0]?.();
+    h.streams[0]?.event("state", { nope: true });
     await tick();
-    expect(streams).toHaveLength(2);
-    expect(states).toHaveLength(2);
+    expect(h.malformed).toHaveLength(1);
+    expect(h.states).toHaveLength(1);
+
+    h.streams[0]?.close();
+    await tick();
+    expect(h.timers).toHaveLength(1);
+    h.timers[0]?.();
+    await tick();
+    expect(h.streams).toHaveLength(2);
+    expect(h.states).toHaveLength(2);
+    expect(h.phases.at(-1)).toBe("live");
   });
 
-  test("ignores a stale pairing hydration and its later stream callbacks", async () => {
+  test("ignores a stale pairing hydration and its later stream events", async () => {
     const responses: Array<(response: Response) => void> = [];
-    const streams: FakeEventSource[] = [];
-    const states: string[] = [];
-    const phases: string[] = [];
-    const client = new HubClient(
-      () => ({ hubUrl: "https://hub.test", token: "token" }),
-      {
-        onState: (state) => states.push(state.generatedAt),
-        onConnection: (state) => phases.push(state.phase),
-        onMalformed: () => undefined,
-      },
-      {
-        fetcher: (() =>
-          new Promise<Response>((resolve) =>
-            responses.push(resolve),
-          )) as unknown as typeof fetch,
-        eventSource: () => {
-          const stream = new FakeEventSource();
-          streams.push(stream);
-          return stream;
-        },
-      },
-    );
+    const h = harness({
+      stateResponse: () =>
+        new Promise<Response>((resolve) => responses.push(resolve)),
+    });
+    const generatedAt = (state: unknown): string =>
+      (state as { generatedAt: string }).generatedAt;
 
-    client.start();
-    client.start();
+    h.client.start();
+    h.client.start();
     expect(responses).toHaveLength(2);
 
     responses[0]?.(
       Response.json(ranked({ generatedAt: "2026-07-10T00:00:01.000Z" })),
     );
     await tick();
-    expect(states).toEqual([]);
-    expect(streams).toEqual([]);
+    expect(h.states).toEqual([]);
+    expect(h.streams).toEqual([]);
 
     responses[1]?.(
       Response.json(ranked({ generatedAt: "2026-07-10T00:00:02.000Z" })),
     );
     await tick();
-    expect(states).toEqual(["2026-07-10T00:00:02.000Z"]);
-    const staleStream = streams[0];
+    expect(h.states.map(generatedAt)).toEqual(["2026-07-10T00:00:02.000Z"]);
+    const staleStream = h.streams[0];
     expect(staleStream).toBeDefined();
 
-    client.start();
+    h.client.start();
     responses[2]?.(
       Response.json(ranked({ generatedAt: "2026-07-10T00:00:03.000Z" })),
     );
     await tick();
-    expect(states).toEqual([
+    expect(h.states.map(generatedAt)).toEqual([
       "2026-07-10T00:00:02.000Z",
       "2026-07-10T00:00:03.000Z",
     ]);
 
-    staleStream?.state(ranked({ generatedAt: "2026-07-10T00:00:04.000Z" }));
-    staleStream?.onopen?.(new Event("open"));
-    staleStream?.onerror?.(new Event("error"));
-
-    expect(states).toEqual([
+    staleStream?.event(
+      "state",
+      ranked({ generatedAt: "2026-07-10T00:00:04.000Z" }),
+    );
+    await tick();
+    expect(h.states.map(generatedAt)).toEqual([
       "2026-07-10T00:00:02.000Z",
       "2026-07-10T00:00:03.000Z",
     ]);
-    expect(phases.at(-1)).toBe("connecting");
+  });
+
+  test("stopping aborts the stream without scheduling a reconnect", async () => {
+    const h = harness();
+    h.client.start();
+    await tick();
+    expect(h.streams).toHaveLength(1);
+
+    h.client.stop();
+    h.streams[0]?.close();
+    await tick();
+    expect(h.timers).toHaveLength(0);
   });
 });
 

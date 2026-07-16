@@ -1,14 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { useStore } from "../store";
 import { connect, runAction } from "./hubClient";
 
-const originalEventSource = (globalThis as { EventSource?: unknown })
-  .EventSource;
 const originalFetch = globalThis.fetch;
 const originalWindow = (globalThis as { window?: unknown }).window;
 const originalHubToken = process.env.VITE_HUB_TOKEN;
 
 afterEach(() => {
-  (globalThis as { EventSource?: unknown }).EventSource = originalEventSource;
   globalThis.fetch = originalFetch;
   (globalThis as { window?: unknown }).window = originalWindow;
   if (originalHubToken === undefined) {
@@ -16,26 +14,94 @@ afterEach(() => {
   } else {
     process.env.VITE_HUB_TOKEN = originalHubToken;
   }
+  useStore.getState().setConnected(false);
 });
 
 describe("hubClient auth", () => {
-  test("appends the Tauri Hub token to the EventSource stream URL", async () => {
-    const urls: string[] = [];
+  test("streams over fetch with the Tauri Hub token as a bearer header", async () => {
+    let request: Request | undefined;
     (globalThis as { window?: unknown }).window = tauriWindow("stream-token");
-    (globalThis as { EventSource?: unknown }).EventSource = class {
-      onopen: (() => void) | null = null;
-      onerror: (() => void) | null = null;
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      request = new Request(input, init);
+      return Promise.resolve(
+        new Response(
+          sseBody([
+            'event: state\ndata: {"items":[],"generatedAt":"2026-07-17T00:00:00.000Z"}\n\n',
+            ": heartbeat\n\n",
+            'event: totally-new\ndata: {"anything":true}\n\n',
+          ]),
+          {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          },
+        ),
+      );
+    }) as typeof fetch;
 
-      constructor(readonly url: string) {
-        urls.push(url);
-      }
+    const stream = await connect();
+    await tick();
+    stream.close();
 
-      addEventListener() {}
+    expect(request?.url).toBe("http://127.0.0.1:4317/stream");
+    expect(request?.url).not.toContain("token=");
+    expect(request?.headers.get("authorization")).toBe("Bearer stream-token");
+    expect(request?.headers.get("accept")).toBe("text/event-stream");
+    expect(useStore.getState().connected).toBe(true);
+  });
+
+  test("reconnects after the stream ends and stops when closed", async () => {
+    const requests: Request[] = [];
+    (globalThis as { window?: unknown }).window = tauriWindow("stream-token");
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(new Request(input, init));
+      return Promise.resolve(
+        new Response(sseBody([], { close: true }), {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+      );
+    }) as typeof fetch;
+
+    const stream = await connect();
+    await tick();
+
+    expect(requests).toHaveLength(1);
+    expect(useStore.getState().connected).toBe(false);
+    stream.close();
+  });
+
+  test("halts reconnection when the stream rejects the bearer token", async () => {
+    const retryDelays: number[] = [];
+    const errors: unknown[][] = [];
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalConsoleError = console.error;
+    (globalThis as { window?: unknown }).window = tauriWindow("stream-token");
+    globalThis.fetch = ((_input: RequestInfo | URL, _init?: RequestInit) =>
+      Promise.resolve(
+        new Response("unauthorized", { status: 401 }),
+      )) as typeof fetch;
+    console.error = (...args: unknown[]) => {
+      errors.push(args);
     };
+    globalThis.setTimeout = ((handler: () => void, delay?: number) => {
+      if (delay !== undefined && delay > 0) {
+        retryDelays.push(delay);
+      }
+      return originalSetTimeout(handler, delay);
+    }) as typeof setTimeout;
 
-    await connect();
+    try {
+      const stream = await connect();
+      await tick();
+      stream.close();
+    } finally {
+      console.error = originalConsoleError;
+      globalThis.setTimeout = originalSetTimeout;
+    }
 
-    expect(urls).toEqual(["http://127.0.0.1:4317/stream?token=stream-token"]);
+    expect(errors).toHaveLength(1);
+    expect(retryDelays).toEqual([]);
+    expect(useStore.getState().connected).toBe(false);
   });
 
   test("sends the Tauri Hub token on action requests", async () => {
@@ -97,6 +163,27 @@ describe("hubClient auth", () => {
     expect(request?.headers.get("authorization")).toBe("Bearer vite-token");
   });
 });
+
+function sseBody(
+  chunks: string[],
+  options: { close?: boolean } = {},
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) {
+        controller.enqueue(encoder.encode(chunk));
+      }
+      if (options.close === true) {
+        controller.close();
+      }
+    },
+  });
+}
+
+function tick(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 function tauriWindow(token: string): unknown {
   return {

@@ -57,10 +57,10 @@ When `ASPEX_HUB_TOKEN` is supplied, the operator must provide that environment
 variable to every local caller that should reach the Hub, such as Claude Code
 hook relay processes, because env tokens are intentionally not persisted.
 
-Clients send `Authorization: Bearer <token>`. The SSE stream also accepts the
-token as a `?token=` query parameter because the browser `EventSource` API cannot
-set headers; the tradeoff is that a query-string token can leak into logs, which
-is accepted for a local stream today and a future private-tailnet stream.
+Clients send `Authorization: Bearer <token>`.
+Both first-party clients (the HL2 lab and the legacy web cockpit) consume the SSE stream over fetch-based SSE and send that same header.
+The stream also still accepts the token as a `?token=` query parameter, but that form is deprecated: it remains only as the escape hatch for native `EventSource` clients, which cannot set headers, and its removal is deferred until after the owner's on-device wear test.
+The tradeoff is that a query-string token can leak into logs, which is accepted for a local stream today and a future private-tailnet stream.
 The token is compared in constant time over fixed-length digests, and a missing or wrong token returns `401`.
 
 CORS origin policy stays local/Tauri-only plus at most one operator-configured exact origin (`corsOrigin`): the token check runs after the CORS middleware, so preflight `OPTIONS` still succeeds.

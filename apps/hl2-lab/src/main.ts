@@ -33,7 +33,7 @@ app.insertAdjacentHTML(
   <dialog id="settings-dialog" aria-labelledby="settings-title">
     <form id="settings-form" method="dialog">
       <h1 id="settings-title">Hub pairing</h1>
-      <p>The token is sent only as a bearer header, except for the in-memory SSE URL required by EventSource. It is never displayed or logged.</p>
+      <p>The token is sent only as a bearer header. It is never displayed or logged.</p>
       <input name="username" type="text" autocomplete="username" value="aspex-hub" hidden />
       <label>Hub URL<input id="hub-url" name="hub-url" type="url" inputmode="url" required spellcheck="false" autocomplete="url" /></label>
       <label>Bearer token<input id="hub-token" name="hub-token" type="password" spellcheck="false" autocomplete="current-password" placeholder="Required for this browser tab" /></label>
