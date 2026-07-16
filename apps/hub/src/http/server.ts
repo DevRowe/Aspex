@@ -26,9 +26,13 @@ import type { PreviewRegistry } from "../preview/registry";
 import type { VoiceGateway } from "../voice/gateway";
 import type { WorldModel } from "../world/worldModel";
 import { hubAuth } from "./auth";
-import { IntentLedger } from "./intentLedger";
+import { IntentLedger, type LedgerEntry } from "./intentLedger";
 import { registerPreviewRoutes, subscribePreviewEvents } from "./preview";
-import { createStateStream } from "./sse";
+import {
+  createSharedFrameSource,
+  createStateStream,
+  encodeSseEvent,
+} from "./sse";
 import { registerVoiceRoutes } from "./voice";
 
 export interface ServerDeps {
@@ -150,13 +154,21 @@ export function buildApp(deps: ServerDeps): Hono {
 
   app.get("/state", (c) => c.json(stateSnapshot(deps)));
 
+  // One snapshot + one encoded frame per world:changed event, shared by every
+  // connected /stream client instead of each recomputing the full ranked
+  // snapshot per event.
+  const subscribeStateFrames = createSharedFrameSource({
+    encode: () => encodeSseEvent("state", stateSnapshot(deps)),
+    attach: (notify) => {
+      deps.bus.on("world:changed", notify);
+      return () => deps.bus.off("world:changed", notify);
+    },
+  });
+
   app.get("/stream", (c) => {
     const stream = createStateStream({
       snapshot: () => stateSnapshot(deps),
-      subscribe: (sendState) => {
-        deps.bus.on("world:changed", sendState);
-        return () => deps.bus.off("world:changed", sendState);
-      },
+      subscribe: subscribeStateFrames,
       events:
         previewDeps === undefined
           ? []
@@ -237,33 +249,39 @@ export function buildApp(deps: ServerDeps): Hono {
       );
     }
 
-    if (intentId !== undefined) {
-      const seen = ledger.get(intentId);
+    const runAction = async (): Promise<LedgerEntry> => {
+      const meta = deps.actionMeta(itemId, actionId);
 
-      if (seen !== null) {
-        return c.json(seen.body, seen.status as 200);
+      if (meta?.requiresConfirmation && body.confirmed !== true) {
+        return {
+          status: 409,
+          body: { message: "Action requires confirmation" },
+        };
       }
+
+      // The intentId rides inside the payload so the owning orchestrator can
+      // reuse it as the delivery-inbox filename (end-to-end dedupe).
+      const payload =
+        intentId === undefined
+          ? body.payload
+          : { ...(isRecord(body.payload) ? body.payload : {}), intentId };
+      const result = await deps.dispatchAction(itemId, actionId, payload);
+      return { status: 200, body: result };
+    };
+
+    if (intentId === undefined) {
+      const { status, body: responseBody } = await runAction();
+      return c.json(responseBody, status as 200);
     }
 
-    const meta = deps.actionMeta(itemId, actionId);
+    const outcome = await ledger.execute(intentId, async () => {
+      const entry = await runAction();
+      const dispatched =
+        entry.status === 200 && isRecord(entry.body) && entry.body.ok === true;
+      return { entry, record: dispatched };
+    });
 
-    if (meta?.requiresConfirmation && body.confirmed !== true) {
-      return c.json({ message: "Action requires confirmation" }, 409);
-    }
-
-    // The intentId rides inside the payload so the owning orchestrator can
-    // reuse it as the delivery-inbox filename (end-to-end dedupe).
-    const payload =
-      intentId === undefined
-        ? body.payload
-        : { ...(isRecord(body.payload) ? body.payload : {}), intentId };
-    const result = await deps.dispatchAction(itemId, actionId, payload);
-
-    if (intentId !== undefined && result.ok) {
-      ledger.record(intentId, { status: 200, body: result });
-    }
-
-    return c.json(result);
+    return c.json(outcome.body, outcome.status as 200);
   });
 
   if (deps.intents !== undefined) {
@@ -296,26 +314,27 @@ function registerIntentsRoute(
       return c.json(report, report.ok ? 200 : 404);
     }
 
-    const seen = ledger.get(intent.intentId);
+    const dispatch = intent;
+    const outcome = await ledger.execute(dispatch.intentId, async () => {
+      // Same two-step confirm as consequential actions: dispatch spends real
+      // compute, so an unconfirmed intent is refused and nothing is delivered.
+      if (dispatch.confirmed !== true) {
+        return {
+          entry: {
+            status: 409,
+            body: { message: "Action requires confirmation" },
+          },
+          record: false,
+        };
+      }
 
-    if (seen !== null) {
-      return c.json(seen.body, seen.status as 202);
-    }
+      const ack = await intents.dispatch(dispatch);
+      return ack.ok
+        ? { entry: { status: 202, body: ack }, record: true }
+        : { entry: { status: 502, body: ack }, record: false };
+    });
 
-    // Same two-step confirm as consequential actions: dispatch spends real
-    // compute, so an unconfirmed intent is refused and nothing is delivered.
-    if (intent.confirmed !== true) {
-      return c.json({ message: "Action requires confirmation" }, 409);
-    }
-
-    const ack = await intents.dispatch(intent);
-
-    if (ack.ok) {
-      ledger.record(intent.intentId, { status: 202, body: ack });
-      return c.json(ack, 202);
-    }
-
-    return c.json(ack, 502);
+    return c.json(outcome.body, outcome.status as 202);
   });
 }
 

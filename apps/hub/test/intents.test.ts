@@ -187,6 +187,38 @@ describe("POST /intents", () => {
     db.close();
   });
 
+  test("two concurrent dispatches with the same intentId deliver once", async () => {
+    const { app, db, orchestrator } = openIntentsServer();
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const dispatch = orchestrator.dispatch.bind(orchestrator);
+    orchestrator.dispatch = async (intent) => {
+      await gate;
+      return dispatch(intent);
+    };
+    const intent = {
+      verb: "dispatch",
+      intentId: "d-9",
+      orchestrator: "giles",
+      instruction: "Do it once.",
+      confirmed: true,
+    };
+
+    const first = post(app, "/intents", intent);
+    const second = post(app, "/intents", intent);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    release();
+    const [firstResponse, secondResponse] = await Promise.all([first, second]);
+
+    expect(firstResponse.status).toBe(202);
+    expect(secondResponse.status).toBe(202);
+    expect(await secondResponse.json()).toEqual(await firstResponse.json());
+    expect(orchestrator.dispatchCalls).toHaveLength(1);
+    db.close();
+  });
+
   test("dispatch to an unknown orchestrator is a delivery failure", async () => {
     const { app, db } = openIntentsServer();
 
@@ -308,6 +340,34 @@ describe("POST /actions idempotency (intentId)", () => {
     expect(first.status).toBe(200);
     expect(second.status).toBe(200);
     expect(await second.json()).toEqual(await first.json());
+    expect(orchestrator.runActionCalls).toHaveLength(1);
+    db.close();
+  });
+
+  test("two concurrent requests with the same intentId dispatch once", async () => {
+    const { app, db, orchestrator } = openIntentsServer();
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const runAction = orchestrator.runAction.bind(orchestrator);
+    orchestrator.runAction = async (itemId, actionId, payload) => {
+      await gate;
+      return runAction(itemId, actionId, payload);
+    };
+    const body = { confirmed: true, intentId: "a-5", payload: { text: "go" } };
+
+    // Both requests are in flight before the first dispatch resolves - the
+    // exact concurrent-retry race the in-flight ledger entry closes.
+    const first = post(app, URL_PATH, body);
+    const second = post(app, URL_PATH, body);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    release();
+    const [firstResponse, secondResponse] = await Promise.all([first, second]);
+
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+    expect(await secondResponse.json()).toEqual(await firstResponse.json());
     expect(orchestrator.runActionCalls).toHaveLength(1);
     db.close();
   });

@@ -30,6 +30,7 @@ export class LabScene {
   private readonly root = new THREE.Group();
   private readonly targetMeshes: THREE.Mesh[] = [];
   private readonly controllers: THREE.Group[] = [];
+  private readonly controllerConnected: boolean[] = [];
   private readonly raycaster = new THREE.Raycaster();
   private readonly pointer = new THREE.Vector2();
   private readonly reticle: THREE.Mesh;
@@ -74,12 +75,23 @@ export class LabScene {
 
     for (let index = 0; index < 4; index += 1) {
       const controller = this.renderer.xr.getController(index);
+      // Controller groups exist (visible, at the identity transform) before
+      // any input source connects; on-device the unused slots would raycast
+      // from the origin straight through the panel and pin focus, so only
+      // connected controllers may drive the focus ray.
+      controller.addEventListener("connected", () => {
+        this.controllerConnected[index] = true;
+      });
+      controller.addEventListener("disconnected", () => {
+        this.controllerConnected[index] = false;
+      });
       controller.addEventListener("selectstart", () =>
         this.input.selectStart(),
       );
       controller.addEventListener("select", () => this.input.select());
       controller.addEventListener("selectend", () => this.input.selectEnd());
       this.controllers.push(controller);
+      this.controllerConnected.push(false);
       this.scene.add(controller);
     }
 
@@ -403,9 +415,9 @@ export class LabScene {
 
   private renderFrame(): void {
     if (this.renderer.xr.isPresenting) {
-      let hit = false;
-      for (const controller of this.controllers) {
-        if (!controller.visible) {
+      let nearest: THREE.Intersection | undefined;
+      for (const [index, controller] of this.controllers.entries()) {
+        if (this.controllerConnected[index] !== true || !controller.visible) {
           continue;
         }
         controller.updateMatrixWorld(true);
@@ -413,29 +425,39 @@ export class LabScene {
         this.raycaster.ray.direction
           .set(0, 0, -1)
           .transformDirection(controller.matrixWorld);
-        hit = this.applyRaycast() || hit;
+        const intersection = this.raycaster.intersectObjects(
+          this.targetMeshes,
+          false,
+        )[0];
+        if (
+          intersection !== undefined &&
+          (nearest === undefined || intersection.distance < nearest.distance)
+        ) {
+          nearest = intersection;
+        }
       }
-      if (!hit) {
-        this.input.focus(null);
-      }
+      this.applyIntersection(nearest);
     }
     this.renderer.render(this.scene, this.camera);
   }
 
-  private applyRaycast(): boolean {
-    const intersection = this.raycaster.intersectObjects(
-      this.targetMeshes,
-      false,
-    )[0];
+  private applyRaycast(): void {
+    this.applyIntersection(
+      this.raycaster.intersectObjects(this.targetMeshes, false)[0],
+    );
+  }
+
+  private applyIntersection(
+    intersection: THREE.Intersection | undefined,
+  ): void {
     if (intersection === undefined) {
       this.input.focus(null);
       this.reticle.position.set(0, 0, PANEL_Z + 0.02);
-      return false;
+      return;
     }
     this.input.focus(intersection.object.userData.targetId as string);
     this.reticle.position.copy(intersection.point);
     this.reticle.position.z += 0.018;
-    return true;
   }
 
   private resize(): void {

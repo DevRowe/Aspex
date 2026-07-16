@@ -431,6 +431,9 @@ referent-less verbs; item-scoped direction verbs ride the existing
 Retried intents with an already-processed `intentId` replay the cached ack
 from the Hub's bounded `IntentLedger` LRU. Failures are not cached, so
 transient errors stay retryable. Invalid bodies return HTTP 400.
+Concurrent requests with the same `intentId` (on `/intents` or `/actions`)
+also dedupe: the later request awaits the in-flight dispatch and receives its
+outcome instead of dispatching again.
 
 `POST /actions/:itemId/:actionId` also accepts an optional `intentId` field
 next to `confirmed` and `payload`. A retried consequential action returns the
