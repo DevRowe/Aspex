@@ -92,6 +92,34 @@ describe("hub config", () => {
     ).rejects.toThrow("corsOrigin must be a valid origin");
   });
 
+  test("tls is off by default and enabled by env cert/key paths", async () => {
+    const missing = join(tmpdir(), `missing-aspex-${process.pid}.json`);
+
+    const plain = await loadConfig({ defaultConfigPath: missing, env: {} });
+    expect(plain.tls).toBeUndefined();
+
+    const tls = await loadConfig({
+      defaultConfigPath: missing,
+      env: {
+        ASPEX_HUB_TLS_CERT: "/etc/aspex/hub.crt",
+        ASPEX_HUB_TLS_KEY: "~/aspex/hub.key",
+      },
+    });
+    expect(tls.tls).toEqual({
+      certPath: "/etc/aspex/hub.crt",
+      keyPath: expandHome("~/aspex/hub.key"),
+    });
+  });
+
+  test("tls requires both certPath and keyPath", async () => {
+    await expect(
+      loadConfig({
+        defaultConfigPath: join(tmpdir(), `missing-aspex-${process.pid}.json`),
+        env: { ASPEX_HUB_TLS_CERT: "/etc/aspex/hub.crt" },
+      }),
+    ).rejects.toThrow("tls requires both certPath and keyPath");
+  });
+
   test("hubClientHost dials loopback for wildcard binds and the bind otherwise", () => {
     expect(hubClientHost({ hubBind: "0.0.0.0" })).toBe("127.0.0.1");
     expect(hubClientHost({ hubBind: "::" })).toBe("127.0.0.1");

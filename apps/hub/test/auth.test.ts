@@ -46,7 +46,14 @@ describe("hub API auth", () => {
     const response = await app.fetch(new Request("http://hub.test/state"));
 
     expect(response.status).toBe(401);
-    expect(await response.json()).toEqual({ message: "Unauthorized" });
+    expect(response.headers.get("content-type")).toContain(
+      "application/problem+json",
+    );
+    expect(await response.json()).toMatchObject({
+      title: "Unauthorized",
+      status: 401,
+      message: "Unauthorized",
+    });
     db.close();
   });
 
@@ -154,6 +161,7 @@ describe("hub API auth", () => {
         headers: {
           Origin: "http://localhost:5173",
           "Access-Control-Request-Method": "GET",
+          "Access-Control-Request-Headers": "authorization, last-event-id",
         },
       }),
     );
@@ -163,7 +171,7 @@ describe("hub API auth", () => {
       "http://localhost:5173",
     );
     expect(response.headers.get("access-control-allow-headers")).toBe(
-      "Authorization,Content-Type,X-Aspex-Voice-Session,X-Aspex-Voice-Generation",
+      "Authorization,Content-Type,Idempotency-Key,Last-Event-ID,X-Aspex-Voice-Session,X-Aspex-Voice-Generation",
     );
     db.close();
   });

@@ -182,6 +182,14 @@ function responseMessage(value: unknown, fallback: string): string {
     if (typeof record.message === "string") {
       return record.message;
     }
+    // RFC 9457 problem+json (Hub protocol v1.1): prefer the human-readable
+    // detail, then the title, for problems without the legacy message field.
+    if (typeof record.detail === "string") {
+      return record.detail;
+    }
+    if (typeof record.title === "string") {
+      return record.title;
+    }
     if (typeof record.text === "string") {
       return record.text;
     }

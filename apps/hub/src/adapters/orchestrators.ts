@@ -81,7 +81,7 @@ export class OrchestratorRegistry {
   actionMeta(
     itemId: string,
     actionId: string,
-  ): { requiresConfirmation: boolean } | null {
+  ): { requiresConfirmation: boolean; label: string } | null {
     const orchestrator = this.orchestratorForItem(itemId);
 
     if (orchestrator === null) {
@@ -93,7 +93,10 @@ export class OrchestratorRegistry {
       .find((candidate) => candidate.id === actionId);
 
     return action
-      ? { requiresConfirmation: action.requiresConfirmation }
+      ? {
+          requiresConfirmation: action.requiresConfirmation,
+          label: action.label,
+        }
       : null;
   }
 

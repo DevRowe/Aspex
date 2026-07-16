@@ -32,6 +32,7 @@ Text at code size is not readable on today's glasses, so everything wearer-facin
 The Hub runs on the same machine as your agents, holds the world-model, and stays local-first - no cloud relay in the MVP.
 By default the Hub binds `127.0.0.1` and the browser CORS allowlist is localhost/Tauri-only, so out-of-the-box access is same-machine.
 To let glasses reach it over a private [Tailscale](https://tailscale.com)-style tailnet, set the bind address (`hubBind` in config or `ASPEX_HUB_BIND`, e.g. the dev box's tailnet address) and, for a browser client such as the XR lab client, one extra exact CORS origin (`corsOrigin` or `ASPEX_HUB_CORS_ORIGIN`).
+The Hub can also serve HTTPS on the tailnet via the optional `tls` config (see the TLS section of [docs/hub-api.md](docs/hub-api.md)); clients that require secure origins need it.
 Every endpoint requires the local auth token, so the API is not wide open when that tailnet reachability is enabled (see [Hub API auth](#hub-api-auth)).
 
 **Two client tracks: lab first.**

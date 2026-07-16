@@ -16,7 +16,7 @@ import { type AspexConfig, resolvedLivenessConfig } from "./config";
 import { enforceOwnership, rank } from "./engine/attention";
 import { LivenessTicker, livenessAt, nextStaleAfter } from "./engine/liveness";
 import { IntentLedger } from "./http/intentLedger";
-import { type ServerDeps, buildApp } from "./http/server";
+import { type ServerDeps, buildApp, createHubBroadcaster } from "./http/server";
 import { openDb } from "./store/db";
 import { ItemStore } from "./store/itemStore";
 import { VoiceGateway } from "./voice/gateway";
@@ -204,6 +204,14 @@ export function buildHub(cfg: AspexConfig) {
       query: queryIntent,
     },
     intentLedger: new IntentLedger(),
+    // Created once here (like the ledger) so the start()-time app rebuild
+    // neither leaves an orphaned broadcaster subscribed to the bus nor resets
+    // the SSE replay ring and id counter.
+    sseBroadcaster: createHubBroadcaster({
+      worldModel: world,
+      bus,
+      cap: cfg.needsMeCap,
+    }),
     voiceGateway,
     voice: {
       enabled: cfg.voice?.enabled === true,

@@ -1,5 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Context, MiddlewareHandler } from "hono";
+import { problem } from "./problems";
 
 // The Hub is reachable from glasses over a private tailnet (ADR-0023), so every
 // HTTP/SSE endpoint requires a locally generated bearer token. This is a
@@ -37,7 +38,7 @@ export function hubAuth(expectedToken: string): MiddlewareHandler {
       presented === undefined ||
       !timingSafeEqualToken(presented, expectedToken)
     ) {
-      return c.json({ message: "Unauthorized" }, 401);
+      return problem(c, { status: 401, title: "Unauthorized" });
     }
 
     return next();

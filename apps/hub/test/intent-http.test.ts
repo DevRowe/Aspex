@@ -145,9 +145,9 @@ describe("hub HTTP intent route", () => {
     );
 
     expect(missing.status).toBe(400);
-    expect(await missing.json()).toEqual({ error: "text required" });
+    expect(await missing.json()).toMatchObject({ error: "text required" });
     expect(blank.status).toBe(400);
-    expect(await blank.json()).toEqual({ error: "text required" });
+    expect(await blank.json()).toMatchObject({ error: "text required" });
   });
 
   test("POST /intent rejects bad context", async () => {
@@ -175,7 +175,9 @@ describe("hub HTTP intent route", () => {
     );
 
     expect(response.status).toBe(503);
-    expect(await response.json()).toEqual({ error: "intent not configured" });
+    expect(await response.json()).toMatchObject({
+      error: "intent not configured",
+    });
   });
 
   test("POST /intent stays disabled when only voice has a gateway", async () => {
@@ -194,7 +196,9 @@ describe("hub HTTP intent route", () => {
     );
 
     expect(response.status).toBe(503);
-    expect(await response.json()).toEqual({ error: "intent not configured" });
+    expect(await response.json()).toMatchObject({
+      error: "intent not configured",
+    });
   });
 });
 

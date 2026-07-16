@@ -121,7 +121,13 @@ describe("POST /intents", () => {
     const response = await post(app, "/intents", { verb: "dispatch" });
 
     expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({
+    expect(response.headers.get("content-type")).toContain(
+      "application/problem+json",
+    );
+    expect(await response.json()).toMatchObject({
+      type: "about:blank",
+      title: "Invalid DirectionIntent",
+      status: 400,
       message: "Invalid DirectionIntent",
     });
     db.close();
@@ -138,8 +144,25 @@ describe("POST /intents", () => {
     });
 
     expect(response.status).toBe(409);
-    expect(await response.json()).toEqual({
-      message: "Action requires confirmation",
+    expect(response.headers.get("content-type")).toContain(
+      "application/problem+json",
+    );
+    expect(await response.json()).toMatchObject({
+      type: "urn:aspex:problem:confirmation-required",
+      title: "Action requires confirmation",
+      status: 409,
+      message: expect.stringContaining("confirmation"),
+      verb: "dispatch",
+      intentId: "d-1",
+      orchestrator: "giles",
+      summary: expect.stringContaining("Add a settings screen."),
+      resend: {
+        verb: "dispatch",
+        intentId: "d-1",
+        orchestrator: "giles",
+        instruction: "Add a settings screen.",
+        confirmed: true,
+      },
     });
     expect(orchestrator.dispatchCalls).toHaveLength(0);
     db.close();
@@ -428,7 +451,7 @@ describe("OrchestratorRegistry routing", () => {
 
     expect(
       orchestrators.actionMeta("orchestrator:giles:known-task", "ship"),
-    ).toEqual({ requiresConfirmation: true });
+    ).toEqual({ requiresConfirmation: true, label: "Review & ship" });
     expect(
       orchestrators.actionMeta("orchestrator:giles:known-task", "nope"),
     ).toBeNull();
@@ -439,14 +462,62 @@ describe("OrchestratorRegistry routing", () => {
 describe("IntentLedger", () => {
   test("evicts the least recently used entry beyond capacity", () => {
     const ledger = new IntentLedger(2);
-    ledger.record("a", { status: 200, body: 1 });
-    ledger.record("b", { status: 200, body: 2 });
-    expect(ledger.get("a")?.body).toBe(1);
+    ledger.record("a", { status: 200, body: 1 }, "fp-a");
+    ledger.record("b", { status: 200, body: 2 }, "fp-b");
+    expect(ledger.get("a")?.entry.body).toBe(1);
 
-    ledger.record("c", { status: 200, body: 3 });
+    ledger.record("c", { status: 200, body: 3 }, "fp-c");
 
     expect(ledger.get("b")).toBeNull();
-    expect(ledger.get("a")?.body).toBe(1);
-    expect(ledger.get("c")?.body).toBe(3);
+    expect(ledger.get("a")?.entry.body).toBe(1);
+    expect(ledger.get("c")?.entry.body).toBe(3);
+  });
+
+  test("a replayed dispatch is marked with Idempotency-Replayed", async () => {
+    const { app, db, orchestrator } = openIntentsServer();
+    const intent = {
+      verb: "dispatch",
+      intentId: "d-8",
+      orchestrator: "giles",
+      instruction: "Once only.",
+      confirmed: true,
+    };
+
+    const first = await post(app, "/intents", intent);
+    const second = await post(app, "/intents", intent);
+
+    expect(first.headers.get("Idempotency-Replayed")).toBeNull();
+    expect(second.headers.get("Idempotency-Replayed")).toBe("true");
+    expect(orchestrator.dispatchCalls).toHaveLength(1);
+    db.close();
+  });
+
+  test("the same dispatch intentId with a different instruction is a 422 conflict", async () => {
+    const { app, db, orchestrator } = openIntentsServer();
+
+    const first = await post(app, "/intents", {
+      verb: "dispatch",
+      intentId: "d-7",
+      orchestrator: "giles",
+      instruction: "Original instruction.",
+      confirmed: true,
+    });
+    const conflicting = await post(app, "/intents", {
+      verb: "dispatch",
+      intentId: "d-7",
+      orchestrator: "giles",
+      instruction: "Different instruction.",
+      confirmed: true,
+    });
+
+    expect(first.status).toBe(202);
+    expect(conflicting.status).toBe(422);
+    expect(await conflicting.json()).toMatchObject({
+      type: "urn:aspex:problem:same-key-different-payload",
+      status: 422,
+      intentId: "d-7",
+    });
+    expect(orchestrator.dispatchCalls).toHaveLength(1);
+    db.close();
   });
 });

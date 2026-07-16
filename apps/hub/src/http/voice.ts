@@ -6,6 +6,7 @@ import {
 } from "@aspex/schema";
 import type { Hono } from "hono";
 import type { VoiceGatewayResult } from "../voice/gateway";
+import { problem } from "./problems";
 import type { ServerDeps } from "./server";
 
 const AUDIO_TTL_MS = 60_000;
@@ -23,7 +24,12 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
       deps.voiceGateway === undefined ||
       (deps.voice !== undefined && deps.voice.enabled !== true)
     ) {
-      return c.json({ error: "voice not configured" }, 503);
+      return problem(c, {
+        status: 503,
+        title: "Voice not configured",
+        detail: "voice not configured",
+        extensions: { error: "voice not configured" },
+      });
     }
 
     let request: {
@@ -49,7 +55,7 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
       );
 
       if (!isFileLike(audio)) {
-        return c.json({ message: "Missing audio" }, 400);
+        return problem(c, { status: 400, title: "Missing audio" });
       }
 
       request = {
@@ -61,7 +67,11 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
         ...(intentId !== undefined ? { intentId } : {}),
       };
     } catch (error) {
-      return c.json({ message: validationMessage(error) }, 400);
+      return problem(c, {
+        status: 400,
+        title: "Invalid request",
+        detail: validationMessage(error),
+      });
     }
 
     const result = await deps.voiceGateway.handle(
@@ -77,7 +87,12 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
 
   app.post("/intent", async (c) => {
     if (deps.voiceGateway === undefined || deps.intent?.enabled !== true) {
-      return c.json({ error: "intent not configured" }, 503);
+      return problem(c, {
+        status: 503,
+        title: "Intent not configured",
+        detail: "intent not configured",
+        extensions: { error: "intent not configured" },
+      });
     }
 
     let request: {
@@ -93,7 +108,12 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
       const text = isRecord(body) ? body.text : undefined;
 
       if (typeof text !== "string" || text.trim() === "") {
-        return c.json({ error: "text required" }, 400);
+        return problem(c, {
+          status: 400,
+          title: "Invalid request body",
+          detail: "text required",
+          extensions: { error: "text required" },
+        });
       }
 
       const context = isRecord(body) ? body.context : undefined;
@@ -109,7 +129,11 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
         ),
       };
     } catch (error) {
-      return c.json({ message: validationMessage(error) }, 400);
+      return problem(c, {
+        status: 400,
+        title: "Invalid request",
+        detail: validationMessage(error),
+      });
     }
 
     const result = await deps.voiceGateway.handleText(
@@ -124,7 +148,12 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
 
   app.post("/voice/cancel", async (c) => {
     if (deps.voiceGateway === undefined) {
-      return c.json({ error: "voice not configured" }, 503);
+      return problem(c, {
+        status: 503,
+        title: "Voice not configured",
+        detail: "voice not configured",
+        extensions: { error: "voice not configured" },
+      });
     }
     try {
       const clientSessionId = readClientSessionId(
@@ -140,7 +169,11 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
         ),
       );
     } catch (error) {
-      return c.json({ message: validationMessage(error) }, 400);
+      return problem(c, {
+        status: 400,
+        title: "Invalid request",
+        detail: validationMessage(error),
+      });
     }
   });
 
@@ -150,7 +183,7 @@ export function registerVoiceRoutes(app: Hono, deps: ServerDeps): void {
     const cached = audioCache.get(c.req.param("id"));
 
     if (cached === undefined || cached.expiresAt <= now) {
-      return c.json({ message: "Audio not found" }, 404);
+      return problem(c, { status: 404, title: "Audio not found" });
     }
 
     const body = cached.bytes.buffer.slice(
