@@ -14,20 +14,6 @@
     "apps/desktop": {
       "name": "@aspex/desktop",
     },
-    "apps/hl2-lab": {
-      "name": "@aspex/hl2-lab",
-      "dependencies": {
-        "@aspex/schema": "workspace:*",
-        "eventsource-parser": "^3.1.0",
-        "three": "^0.179.1",
-      },
-      "devDependencies": {
-        "@types/three": "^0.179.0",
-        "@types/webxr": "^0.5.22",
-        "typescript": "^5.5.0",
-        "vite": "^5.4.21",
-      },
-    },
     "apps/hub": {
       "name": "@aspex/hub",
       "bin": {
@@ -66,6 +52,20 @@
         "autoprefixer": "^10.4.21",
         "postcss": "^8.5.6",
         "tailwindcss": "^3.4.17",
+        "typescript": "^5.5.0",
+        "vite": "^5.4.21",
+      },
+    },
+    "apps/xr-lab": {
+      "name": "@aspex/xr-lab",
+      "dependencies": {
+        "@aspex/schema": "workspace:*",
+        "eventsource-parser": "^3.1.0",
+        "three": "^0.179.1",
+      },
+      "devDependencies": {
+        "@types/three": "^0.179.0",
+        "@types/webxr": "^0.5.22",
         "typescript": "^5.5.0",
         "vite": "^5.4.21",
       },
@@ -189,13 +189,13 @@
 
     "@aspex/desktop": ["@aspex/desktop@workspace:apps/desktop"],
 
-    "@aspex/hl2-lab": ["@aspex/hl2-lab@workspace:apps/hl2-lab"],
-
     "@aspex/hub": ["@aspex/hub@workspace:apps/hub"],
 
     "@aspex/schema": ["@aspex/schema@workspace:packages/schema"],
 
     "@aspex/web": ["@aspex/web@workspace:apps/web"],
+
+    "@aspex/xr-lab": ["@aspex/xr-lab@workspace:apps/xr-lab"],
 
     "@babel/code-frame": ["@babel/code-frame@7.29.7", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.29.7", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw=="],
 

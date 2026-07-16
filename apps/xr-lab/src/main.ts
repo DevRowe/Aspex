@@ -1,5 +1,6 @@
 import type { Action, ClientDirective } from "@aspex/schema";
 import "./styles.css";
+import { interactionHint } from "./capabilities";
 import { ConfirmationGate } from "./confirmation";
 import { DirectionClient, type DirectionResult } from "./direction";
 import type { ConnectionState } from "./domain";
@@ -108,10 +109,19 @@ const input = new FocusController({
   focusChanged: (targetId) => scene.setFocus(targetId),
 });
 
-const scene = new LabScene(app, input, (active) => {
-  arActive = active;
-  arButton.textContent = active ? "EXIT AR" : "AR";
-});
+const scene = new LabScene(
+  app,
+  input,
+  (active) => {
+    arActive = active;
+    arButton.textContent = active ? "EXIT AR" : "AR";
+  },
+  (capabilities) => {
+    if (arActive) {
+      showNotice(interactionHint(capabilities));
+    }
+  },
+);
 
 const hub = new HubClient(() => settings.get(), {
   onState: (state) => {

@@ -18,7 +18,7 @@ What got resolved from the old open questions: Hub-brokered voice gateway (ADR-0
 **Must pass before any Phase 2 spatial work begins (ADR-0009).** The plan's flag: **mic capture inside an active `immersive-ar` WebXR session is unreliable on some runtimes — verify it on the real HoloLens 2 / Android XR target.** Web Speech API is cloud in Chrome — not the foundation; this gate verifies the local `getUserMedia` path (the same one Phase 1's flat capture uses) survives inside an immersive session.
 
 This is a small de-risking spike, **blocked on hardware** (the Aura grey-import is pending; HoloLens 2 is a test rig).
-The isolated `apps/hl2-lab` instrument now exercises the protocol and interaction path, but it makes no physical-device verification claim and does not pass this gate by itself.
+The isolated `apps/xr-lab` instrument now exercises the protocol and interaction path, but it makes no physical-device verification claim and does not pass this gate by itself.
 It runs the moment a target is in hand; it does **not** block any Phase 1 card.
 Outcome decides whether Phase 2 push-to-talk reuses the flat capture path as-is or needs a workaround (e.g. capture outside the session, or a native bridge).
 

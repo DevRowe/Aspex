@@ -28,7 +28,7 @@ The Hub-side half of the Aspex-orchestrator protocol (design report: giles task 
 - `noUncheckedIndexedAccess` is on; index and regex-group access is possibly-undefined.
 - **Shared primitives live in `@aspex/schema`.** Payload guards/extractors (`isRecord`, `stringField`, `trimmedStringField`, `stringAt`, `projectFromCwd`, `errorMessage`) are in `packages/schema/src/guards.ts`, and all item-id constructors in `packages/schema/src/ids.ts`; import these instead of redefining them in an adapter or hub module.
 - Long Markdown docs are written one sentence per line.
-- **HL2 lab commands.** `apps/hl2-lab` is an unsupported, lab-only WebXR design instrument, never a product target or a legacy-cockpit extension; use `bun run --cwd apps/hl2-lab dev`, `bun run build:hl2-lab`, and `bun run test:hl2-lab`, with on-device pairing and wear-test notes in `docs/hl2-lab.md`.
+- **XR lab commands.** `apps/xr-lab` is an unsupported, lab-only, device-neutral WebXR design instrument (Android XR primary target, HL2 demoted to a wear-test jig), never a product target or a legacy-cockpit extension; use `bun run --cwd apps/xr-lab dev`, `bun run build:xr-lab`, and `bun run test:xr-lab`, with capability-gated input in `apps/xr-lab/src/capabilities.ts` and on-device pairing and wear-test notes in `docs/xr-lab.md`.
 
 ## Sharp edges
 

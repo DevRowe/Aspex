@@ -11,7 +11,7 @@
   "files": {
     "ignore": [
       "apps/web/dist/**",
-      "apps/hl2-lab/dist/**",
+      "apps/xr-lab/dist/**",
       "**/target/**",
       "apps/desktop/src-tauri/gen/schemas/**"
     ]

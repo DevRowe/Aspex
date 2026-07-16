@@ -135,11 +135,12 @@ review-and-ship) are queued as intent files in the designated
 `state/aspex-inbox/` delivery directory for Giles to execute through its own
 sanctioned helpers; Aspex itself never mutates a project.
 
-## HoloLens 2 WebXR lab
+## WebXR lab client
 
-The standalone client in `apps/hl2-lab` is an unsupported, lab-only design instrument for testing glance cards, gaze/pinch, push-to-talk, and session-safe direction against the real Hub/orchestrator protocol.
+The standalone client in `apps/xr-lab` is an unsupported, lab-only, device-neutral WebXR design instrument for testing glance cards, capability-adaptive input, push-to-talk, and session-safe direction against the real Hub/orchestrator protocol.
+Its primary target is Android XR; HoloLens 2 remains a device it still runs on and the owner's wear-test jig.
 It is deliberately isolated from the legacy cockpit and is not a supported product target.
-Run the desktop simulator with `bun run --cwd apps/hl2-lab dev`, type-check it with `bun run --cwd apps/hl2-lab typecheck`, build it with `bun run build:hl2-lab`, and follow the pairing and on-device checklist in [docs/hl2-lab.md](docs/hl2-lab.md).
+Run the desktop simulator with `bun run --cwd apps/xr-lab dev`, type-check it with `bun run --cwd apps/xr-lab typecheck`, build it with `bun run build:xr-lab`, and follow the pairing and on-device checklist in [docs/xr-lab.md](docs/xr-lab.md).
 
 ## Hub API auth
 
