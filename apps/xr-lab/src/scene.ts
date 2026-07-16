@@ -1,11 +1,10 @@
 import type { AttentionItem } from "@aspex/schema";
 import * as THREE from "three";
 import {
+  CapabilityPublisher,
   type InputSourceLike,
-  NO_CAPABILITIES,
   type SessionCapabilities,
   focusRayEligible,
-  summarizeCapabilities,
 } from "./capabilities";
 import type { ArmedAction } from "./confirmation";
 import type { ConnectionState } from "./domain";
@@ -38,7 +37,9 @@ export class LabScene {
   private readonly targetMeshes: THREE.Mesh[] = [];
   private readonly controllers: THREE.Group[] = [];
   private readonly controllerSources: (InputSourceLike | null)[] = [];
-  private capabilities: SessionCapabilities = NO_CAPABILITIES;
+  private readonly capabilities = new CapabilityPublisher((capabilities) =>
+    this.onCapabilities(capabilities),
+  );
   private readonly raycaster = new THREE.Raycaster();
   private readonly pointer = new THREE.Vector2();
   private readonly reticle: THREE.Mesh;
@@ -188,7 +189,7 @@ export class LabScene {
   }
 
   sessionCapabilities(): SessionCapabilities {
-    return this.capabilities;
+    return this.capabilities.current();
   }
 
   private setControllerSource(
@@ -200,18 +201,12 @@ export class LabScene {
   }
 
   private publishCapabilities(): void {
-    const next = summarizeCapabilities(
+    this.capabilities.publish(
       this.controllerSources.filter(
         (source): source is InputSourceLike => source !== null,
       ),
+      this.session !== null,
     );
-    const changed = (Object.keys(next) as (keyof SessionCapabilities)[]).some(
-      (key) => next[key] !== this.capabilities[key],
-    );
-    if (changed) {
-      this.capabilities = next;
-      this.onCapabilities(next);
-    }
   }
 
   private rebuild(): void {

@@ -115,12 +115,11 @@ const scene = new LabScene(
   (active) => {
     arActive = active;
     arButton.textContent = active ? "EXIT AR" : "AR";
-  },
-  (capabilities) => {
-    if (arActive) {
-      showNotice(interactionHint(capabilities));
+    if (active) {
+      showNotice(interactionHint(scene.sessionCapabilities()));
     }
   },
+  (capabilities) => showNotice(interactionHint(capabilities)),
 );
 
 const hub = new HubClient(() => settings.get(), {

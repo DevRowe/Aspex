@@ -92,6 +92,39 @@ export function summarizeCapabilities(
 }
 
 /**
+ * Tracks the session capability summary across input-source changes and
+ * decides when a change may be announced. A change is announced only while
+ * the session is owned, so teardown resets stay silent; the summary itself
+ * always updates, so the next session's change detection starts from the
+ * cleared state.
+ */
+export class CapabilityPublisher {
+  private capabilities: SessionCapabilities = NO_CAPABILITIES;
+
+  constructor(
+    private readonly announce: (capabilities: SessionCapabilities) => void,
+  ) {}
+
+  current(): SessionCapabilities {
+    return this.capabilities;
+  }
+
+  publish(sources: readonly InputSourceLike[], inSession: boolean): void {
+    const next = summarizeCapabilities(sources);
+    const changed = (Object.keys(next) as (keyof SessionCapabilities)[]).some(
+      (key) => next[key] !== this.capabilities[key],
+    );
+    if (!changed) {
+      return;
+    }
+    this.capabilities = next;
+    if (inSession) {
+      this.announce(next);
+    }
+  }
+}
+
+/**
  * Whether an input source may drive the focus ray. Every classified source
  * carries a usable target ray (hands and controllers point, gaze rides the
  * head pose, transient-pointer and screen rays exist while pressed); only

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
+  CapabilityPublisher,
   NO_CAPABILITIES,
+  type SessionCapabilities,
   classifyInputSource,
   focusRayEligible,
   interactionHint,
@@ -125,5 +127,50 @@ describe("interaction hint", () => {
     });
     expect(hint).toContain("pinch selects");
     expect(hint).toContain("trigger selects");
+  });
+});
+
+describe("capability publisher", () => {
+  test("announces a change only once while the session is owned", () => {
+    const announced: SessionCapabilities[] = [];
+    const publisher = new CapabilityPublisher((next) => announced.push(next));
+    publisher.publish(
+      [{ gamepad: {}, targetRayMode: "tracked-pointer" }],
+      true,
+    );
+    publisher.publish(
+      [{ gamepad: {}, targetRayMode: "tracked-pointer" }],
+      true,
+    );
+    expect(announced).toHaveLength(1);
+    expect(announced[0]?.controllers).toBe(true);
+    expect(publisher.current().controllers).toBe(true);
+  });
+
+  test("sources connecting before presentation starts still announce once the session is owned", () => {
+    const announced: SessionCapabilities[] = [];
+    const publisher = new CapabilityPublisher((next) => announced.push(next));
+    publisher.publish([{ targetRayMode: "gaze" }], true);
+    expect(announced).toHaveLength(1);
+    expect(announced[0]?.gaze).toBe(true);
+  });
+
+  test("session teardown resets the summary without announcing", () => {
+    const announced: SessionCapabilities[] = [];
+    const publisher = new CapabilityPublisher((next) => announced.push(next));
+    publisher.publish([{ hand: {} }], true);
+    publisher.publish([], false);
+    expect(announced).toHaveLength(1);
+    expect(publisher.current()).toEqual(NO_CAPABILITIES);
+  });
+
+  test("the next session announces the same capability set as a fresh change", () => {
+    const announced: SessionCapabilities[] = [];
+    const publisher = new CapabilityPublisher((next) => announced.push(next));
+    publisher.publish([{ hand: {} }], true);
+    publisher.publish([], false);
+    publisher.publish([{ hand: {} }], true);
+    expect(announced).toHaveLength(2);
+    expect(announced[1]?.hands).toBe(true);
   });
 });
