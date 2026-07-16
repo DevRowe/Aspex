@@ -16,13 +16,7 @@ import { type AspexConfig, resolvedLivenessConfig } from "./config";
 import { enforceOwnership, rank } from "./engine/attention";
 import { LivenessTicker, livenessAt, nextStaleAfter } from "./engine/liveness";
 import { IntentLedger } from "./http/intentLedger";
-import { subscribePreviewEvents } from "./http/preview";
 import { type ServerDeps, buildApp } from "./http/server";
-import { createPreviewBroker } from "./preview/broker";
-import type { PreviewEngine } from "./preview/engine";
-import { createDockerEngine } from "./preview/engineDocker";
-import { createMockEngine } from "./preview/engineMock";
-import { type PreviewRegistry, loadPreviewRegistry } from "./preview/registry";
 import { openDb } from "./store/db";
 import { ItemStore } from "./store/itemStore";
 import { VoiceGateway } from "./voice/gateway";
@@ -33,16 +27,7 @@ import { WorldModel } from "./world/worldModel";
 
 export const VERSION = "0.0.0";
 
-// How often the Hub reaps idle-expired previews. The broker also sweeps lazily on
-// boot/get/list; this ticker guarantees an otherwise-idle Hub still auto-reaps.
-const PREVIEW_SWEEP_INTERVAL_MS = 15_000;
-
-export interface BuildHubOptions {
-  previewEngineFactory?: (kind: "docker" | "mock") => PreviewEngine;
-  log?: Pick<Console, "warn">;
-}
-
-export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
+export function buildHub(cfg: AspexConfig) {
   ensureDbDirectory(cfg.dbPath);
 
   const db = openDb(cfg.dbPath);
@@ -202,7 +187,7 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
         })
       : undefined;
 
-  const appDeps: Omit<ServerDeps, "previews"> = {
+  const appDeps: ServerDeps = {
     worldModel: world,
     bus,
     cap: cfg.needsMeCap,
@@ -242,128 +227,27 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
         }
       : {}),
   };
-  let app = buildApp({
-    ...appDeps,
-    previews: { enabled: false },
-  });
-  let previewBroker: ReturnType<typeof createPreviewBroker> | undefined;
-  let previewSweep: ReturnType<typeof setInterval> | undefined;
-  let previewEventsUnsubscribe: (() => void) | undefined;
-  const log = options.log ?? console;
+  const app = buildApp(appDeps);
 
   return {
-    get app() {
-      return app;
-    },
+    app,
     bus,
     registry,
     orchestrators,
     world,
     start: async () => {
-      const previewDeps = await preparePreviews(cfg, {
-        engineFactory: options.previewEngineFactory ?? createPreviewEngine,
-        log,
-      });
-      previewBroker = previewDeps?.broker;
-      if (previewDeps !== undefined) {
-        const broker = previewDeps.broker;
-        previewSweep = setInterval(() => {
-          void broker.sweep();
-        }, PREVIEW_SWEEP_INTERVAL_MS);
-        previewSweep.unref?.();
-        previewEventsUnsubscribe = subscribePreviewEvents({
-          broker: previewDeps.broker,
-          registry: previewDeps.registry,
-          bus,
-        });
-      }
-      app = buildApp({
-        ...appDeps,
-        previews:
-          previewDeps === undefined
-            ? { enabled: false }
-            : {
-                enabled: true,
-                broker: previewDeps.broker,
-                registry: previewDeps.registry,
-              },
-      });
       await registry.startAll();
       await orchestrators.startAll();
       liveness.start();
     },
     stop: async () => {
-      if (previewSweep !== undefined) {
-        clearInterval(previewSweep);
-        previewSweep = undefined;
-      }
-      previewEventsUnsubscribe?.();
-      previewEventsUnsubscribe = undefined;
       ntfyNotifier?.detach();
       liveness.stop();
       await orchestrators.stopAll();
       await registry.stopAll();
-      await previewBroker?.shutdown();
       db.close();
     },
   };
-}
-
-async function preparePreviews(
-  cfg: AspexConfig,
-  options: {
-    engineFactory: (kind: "docker" | "mock") => PreviewEngine;
-    log: Pick<Console, "warn">;
-  },
-): Promise<
-  | {
-      broker: ReturnType<typeof createPreviewBroker>;
-      registry: PreviewRegistry;
-    }
-  | undefined
-> {
-  const previews = cfg.previews;
-
-  if (previews?.enabled !== true) {
-    return undefined;
-  }
-
-  const { registry, errors } = loadPreviewRegistry(previews.specs);
-  for (const error of errors) {
-    options.log.warn(
-      `Skipping invalid Preview spec at index ${error.index}${
-        error.specId === undefined ? "" : ` (${error.specId})`
-      }: ${error.message}`,
-    );
-  }
-
-  const engine = options.engineFactory(previews.engine);
-  const available = await engine.available();
-
-  if (!available) {
-    options.log.warn(
-      `previews enabled but ${previews.engine} engine unavailable; Preview Deck routes disabled`,
-    );
-    return undefined;
-  }
-
-  await engine.sweep?.();
-
-  return {
-    registry,
-    broker: createPreviewBroker({
-      engine,
-      lookupSpec: registry.get,
-      config: {
-        maxConcurrent: previews.maxConcurrent,
-        defaultIdleTtlSec: previews.limits.idleTtlSec,
-      },
-    }),
-  };
-}
-
-function createPreviewEngine(kind: "docker" | "mock"): PreviewEngine {
-  return kind === "mock" ? createMockEngine() : createDockerEngine();
 }
 
 function resolveProjectId(

@@ -21,13 +21,10 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { Bus } from "../bus";
 import { rank } from "../engine/attention";
-import type { PreviewBroker } from "../preview/broker";
-import type { PreviewRegistry } from "../preview/registry";
 import type { VoiceGateway } from "../voice/gateway";
 import type { WorldModel } from "../world/worldModel";
 import { hubAuth } from "./auth";
 import { IntentLedger, type LedgerEntry } from "./intentLedger";
-import { registerPreviewRoutes } from "./preview";
 import {
   createSharedFrameSource,
   createStateStream,
@@ -80,11 +77,6 @@ export interface ServerDeps {
     enabled: boolean;
     secret?: string;
   };
-  previews?: {
-    enabled: boolean;
-    broker?: PreviewBroker;
-    registry?: PreviewRegistry;
-  };
 }
 
 export function buildApp(deps: ServerDeps): Hono {
@@ -121,12 +113,6 @@ export function buildApp(deps: ServerDeps): Hono {
         stt: "http",
         tts: false,
       },
-      previews: {
-        enabled:
-          deps.previews?.enabled === true &&
-          deps.previews.broker !== undefined &&
-          deps.previews.registry !== undefined,
-      },
       intentEnabled: deps.intent?.enabled === true,
       intent: {
         enabled: deps.intent?.enabled === true,
@@ -136,20 +122,6 @@ export function buildApp(deps: ServerDeps): Hono {
 
   registerVoiceRoutes(app, deps);
   registerCursorWebhookRoute(app, deps);
-  const previewDeps =
-    deps.previews?.enabled === true &&
-    deps.previews.broker !== undefined &&
-    deps.previews.registry !== undefined
-      ? {
-          broker: deps.previews.broker,
-          registry: deps.previews.registry,
-          bus: deps.bus,
-        }
-      : undefined;
-
-  if (previewDeps !== undefined) {
-    registerPreviewRoutes(app, previewDeps);
-  }
 
   app.get("/state", (c) => c.json(stateSnapshot(deps)));
 
@@ -168,18 +140,6 @@ export function buildApp(deps: ServerDeps): Hono {
     const stream = createStateStream({
       snapshot: () => stateSnapshot(deps),
       subscribe: subscribeStateFrames,
-      events:
-        previewDeps === undefined
-          ? []
-          : [
-              {
-                event: "preview",
-                subscribe: (sendPreview) => {
-                  deps.bus.on("preview", sendPreview);
-                  return () => deps.bus.off("preview", sendPreview);
-                },
-              },
-            ],
     });
 
     return c.body(stream, 200, {

@@ -1,18 +1,16 @@
 import { EventEmitter } from "node:events";
-import type { AttentionItem, Preview } from "@aspex/schema";
+import type { AttentionItem } from "@aspex/schema";
 
 export type HubEvents = {
   "world:changed": { upserted: AttentionItem[]; removed: string[] };
-  preview: Preview;
 };
 
 export class Bus {
   private emitter = new EventEmitter();
 
   constructor() {
-    // Each SSE client used to hold its own listener; the shared frame source
-    // keeps world:changed at one, but preview subscriptions are still
-    // per-client, so the default cap of 10 would warn under normal load.
+    // The shared SSE frame source keeps world:changed at one listener, but
+    // ad-hoc subscribers (ntfy, tests) should never trip the default cap of 10.
     this.emitter.setMaxListeners(0);
   }
 

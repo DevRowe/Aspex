@@ -47,13 +47,6 @@ describe("hub config", () => {
         timeoutMs: 8000,
         elevateConfirm: true,
       });
-      expect(cfg.previews).toEqual({
-        enabled: false,
-        engine: "docker",
-        maxConcurrent: 3,
-        limits: { cpus: "1", memory: "512m", idleTtlSec: 600 },
-        specs: [],
-      });
       expect(cfg.adapters).toEqual({
         codex: { enabled: false },
         opencode: {
@@ -200,25 +193,6 @@ describe("hub config", () => {
     expect(cfg.liveness?.quietAfterMs).toBe(1000);
     expect(cfg.voice?.mock).toBe(true);
     expect(cfg.intent?.mock).toBe(true);
-  });
-
-  test("applies preview environment overrides", async () => {
-    const cfg = await loadConfig({
-      defaultConfigPath: join(tmpdir(), `missing-aspex-${process.pid}.json`),
-      env: {
-        ASPEX_PREVIEWS_ENABLED: "1",
-        ASPEX_PREVIEWS_ENGINE: "mock",
-        ASPEX_PREVIEWS_MAX_CONCURRENT: "5",
-        ASPEX_PREVIEWS_IDLE_TTL_SEC: "30",
-      },
-    });
-
-    expect(cfg.previews).toMatchObject({
-      enabled: true,
-      engine: "mock",
-      maxConcurrent: 5,
-      limits: { idleTtlSec: 30 },
-    });
   });
 
   test("applies voice environment overrides", async () => {
@@ -511,29 +485,6 @@ describe("hub config", () => {
     await expect(
       loadConfig({
         defaultConfigPath: join(tmpdir(), `missing-aspex-${process.pid}.json`),
-        env: { ASPEX_PREVIEWS_ENABLED: "sometimes" },
-      }),
-    ).rejects.toThrow("ASPEX_PREVIEWS_ENABLED must be a boolean");
-
-    await expect(
-      loadConfig({
-        defaultConfigPath: join(tmpdir(), `missing-aspex-${process.pid}.json`),
-        env: { ASPEX_PREVIEWS_ENGINE: "podman" },
-      }),
-    ).rejects.toThrow("ASPEX_PREVIEWS_ENGINE must be docker or mock");
-
-    await expect(
-      loadConfig({
-        defaultConfigPath: join(tmpdir(), `missing-aspex-${process.pid}.json`),
-        env: { ASPEX_PREVIEWS_MAX_CONCURRENT: "0" },
-      }),
-    ).rejects.toThrow(
-      "ASPEX_PREVIEWS_MAX_CONCURRENT must be a positive integer",
-    );
-
-    await expect(
-      loadConfig({
-        defaultConfigPath: join(tmpdir(), `missing-aspex-${process.pid}.json`),
         env: { ASPEX_INTENT_ENABLED: "sometimes" },
       }),
     ).rejects.toThrow("ASPEX_INTENT_ENABLED must be a boolean");
@@ -623,58 +574,6 @@ describe("hub config", () => {
       await expect(
         loadConfig({ configPath: booleanConfigPath, env: {} }),
       ).rejects.toThrow("intent.elevateConfirm must be a boolean");
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  test("validates preview config shape without validating individual specs", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "aspex-preview-config-"));
-    const configPath = join(dir, "config.json");
-
-    await writeFile(
-      configPath,
-      JSON.stringify({
-        previews: {
-          enabled: true,
-          engine: "mock",
-          maxConcurrent: 2,
-          limits: { cpus: "2", memory: "1g", idleTtlSec: 45 },
-          specs: [{ id: "bad" }],
-        },
-      }),
-    );
-
-    try {
-      const cfg = await loadConfig({ configPath, env: {} });
-
-      expect(cfg.previews).toMatchObject({
-        enabled: true,
-        engine: "mock",
-        maxConcurrent: 2,
-        limits: { cpus: "2", memory: "1g", idleTtlSec: 45 },
-      });
-      expect(cfg.previews?.specs).toEqual([{ id: "bad" }]);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  test("throws when preview enabled is not a boolean in config", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "aspex-preview-enabled-"));
-    const configPath = join(dir, "config.json");
-
-    await writeFile(
-      configPath,
-      JSON.stringify({
-        previews: { enabled: "true" },
-      }),
-    );
-
-    try {
-      await expect(loadConfig({ configPath, env: {} })).rejects.toThrow(
-        "previews.enabled must be a boolean",
-      );
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

@@ -47,12 +47,6 @@ of the Bun runtime/toolchain rather than npm dependencies vendored by this repo.
 Browser audio capture uses built-in Web APIs (`getUserMedia`,
 `MediaRecorder`, and `HTMLAudioElement`), not a JavaScript package dependency.
 
-Preview Deck uses existing browser primitives: `iframe`, `fetch`, and the
-existing Hub SSE stream. It adds no npm runtime dependency. The Docker Preview
-engine invokes the host's `docker` command-line tool as an optional external
-capability; Aspex does not link a Docker SDK, native addon, daemon library, or
-vendored Docker component.
-
 Phase 3 free-form intent uses Bun `fetch` to call a configured Ollama-compatible
 HTTP endpoint. It adds no npm runtime dependency for the Intent service.
 
@@ -119,21 +113,11 @@ No AGPL/GPL dependency entered the shipped core in Phase 3. If a future change
 adds a real SDK or vendored client for any of these tools, update this registry
 in the same change and review its transitive licenses.
 
-## Deferred Preview Components
-
-The untrusted pixels lane is not shipped in Phase 2. Components discussed for
-that lane, including neko/WebRTC streaming, screenshot streaming helpers, and
-`model-viewer` or other glTF/AR rendering packages, have not been added to the
-core dependency graph. Review their licenses before any later ADR or card adds
-them.
-
 ## Policy
 
 - Prefer Apache-2.0, MIT, BSD, or ISC dependencies.
 - Do not add AGPL/GPL dependencies to the shipped core.
 - Keep Hub dependencies Bun-compile-safe; avoid Node-native addons.
-- Keep Docker and other Preview engines as CLI tools, services, or pluggable
-  boundaries unless a later ADR explicitly changes that boundary.
 - Keep model/tooling components for voice as separate services or host tools
   unless a later ADR explicitly changes that boundary.
 - Keep local LLMs, model weights, and agent CLIs as host-installed tools or

@@ -10,13 +10,7 @@ export interface SseStateStreamOptions {
   // Delivers pre-encoded SSE frames. The producer side is shared across all
   // connections (see createSharedFrameSource) so one world event encodes once.
   subscribe: (send: (frame: string) => void) => () => void;
-  events?: SseEventSubscription[];
   pingMs?: number;
-}
-
-export interface SseEventSubscription {
-  event: string;
-  subscribe: (send: (data: unknown) => void) => () => void;
 }
 
 // Fan-out with a single upstream subscription: the frame is encoded once per
@@ -60,20 +54,15 @@ export function createSharedFrameSource(options: {
 export function createStateStream({
   snapshot,
   subscribe,
-  events = [],
   pingMs = 15_000,
 }: SseStateStreamOptions): ReadableStream<Uint8Array> {
   let unsubscribe: (() => void) | undefined;
-  const extraUnsubscribers: Array<() => void> = [];
   let ping: Timer | undefined;
   let closed = false;
 
   const teardown = () => {
     unsubscribe?.();
     unsubscribe = undefined;
-    for (const unsubscribeExtra of extraUnsubscribers.splice(0)) {
-      unsubscribeExtra();
-    }
     if (ping !== undefined) {
       clearInterval(ping);
       ping = undefined;
@@ -110,11 +99,6 @@ export function createStateStream({
         return;
       }
       unsubscribe = subscribe(write);
-      for (const event of events) {
-        extraUnsubscribers.push(
-          event.subscribe((data) => sendEvent(event.event, data)),
-        );
-      }
       ping = setInterval(() => write(": ping\n\n"), pingMs);
     },
     cancel() {

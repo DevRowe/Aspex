@@ -3,8 +3,8 @@
 This document describes the security stance as shipped through Phase 3 and the
 orchestrator protocol core. It is scoped to the local Hub, web cockpit, desktop
 shell, Phase 0 adapters, the Phase 1 flat voice loop, the isolated HoloLens 2
-WebXR lab, the Phase 2 Preview Deck, Phase 3 free-form intent plus observe-only
-agent adapters, and the Hub-side orchestrator direction channel.
+WebXR lab, Phase 3 free-form intent plus observe-only agent adapters, and the
+Hub-side orchestrator direction channel.
 
 ## Security Goals
 
@@ -26,7 +26,6 @@ Disallowed in the Hub and web origin:
 - `eval` or equivalent string execution.
 - Dynamic import of agent output.
 - Installing or loading code from an adapter payload.
-- Treating preview content as trusted cockpit UI.
 
 Summaries and evidence are deterministic templates in Phase 0. Phase 3 adds an
 opt-in local LLM Intent service, but it returns constrained Intents only; it is
@@ -66,7 +65,7 @@ The token is compared in constant time over fixed-length digests, and a missing 
 
 CORS origin policy stays local/Tauri-only plus at most one operator-configured exact origin (`corsOrigin`): the token check runs after the CORS middleware, so preflight `OPTIONS` still succeeds.
 The `POST /webhooks/cursor` route is the one bearer exemption, because it is reached by Cursor's cloud and authenticates with its own HMAC signature instead (ADR-0022).
-The bundled `aspex hook-relay` and `aspex preview list` present the token and dial the configured bind address so same-box ingestion still works when the Hub binds a specific interface.
+The bundled `aspex hook-relay` presents the token and dials the configured bind address so same-box ingestion still works when the Hub binds a specific interface.
 
 ## Trusted and Untrusted Inputs
 
@@ -148,48 +147,13 @@ memory behind `/voice/audio/:id` for about one minute with Cache-Control
 no-store semantics. Text read-back and Voice session state are returned to the
 client so the UI can show status and pending confirmation/dictation.
 
-## Preview Deck (Phase 2)
+## Preview Deck (Phase 2, removed)
 
-Preview Deck is opt-in and off by default. When disabled, the Hub does not mount
-Preview routes and the Phase 0/1 world-model is unchanged.
-
-The Deck boots declared Preview specs only. Specs come from local `~/.aspex`
-configuration in v1; Aspex never builds images, checks out branches, computes
-commands, or infers what to run. Pulling a declared image is allowed; building
-is not. This is the ADR-0014 boundary that keeps the feature on the
-consume-not-orchestrate side.
-
-A Preview is ephemeral and never world-model state. It is not an Item, does not
-enter needs-me, is not ranked, and is not persisted as attention state. Booting
-is always an explicit user action, following ADR-0015.
-
-v1 ships only the trusted-iframe Trust lane. Trusted specs render at their own
-`http://127.0.0.1:<allocated-port>` origin inside:
-
-```html
-sandbox="allow-scripts allow-forms allow-same-origin"
-referrerpolicy="no-referrer"
-allow=""
-```
-
-The iframe deliberately withholds `allow-top-navigation`, `allow-popups`, and
-`allow-modals`. Same-Origin Policy is the primary isolation boundary because the
-Preview runs on a different localhost port from the cockpit. No Hub cookies,
-tokens, GitHub credentials, database handles, voice credentials, or other Hub
-secrets are sent into the Preview. The untrusted pixels lane is not shipped; an
-`untrusted` spec is registered but refused at boot with a clear `403`.
-
-Preview lifecycle is bounded and disposable. The broker enforces
-`maxConcurrent`, passes CPU and memory limits to the engine, applies idle TTL,
-and reaps Previews on explicit close, TTL expiry, and Hub shutdown. The Docker
-engine uses recognizable `aspex-preview-*` names, `--rm`, and a startup sweep to
-remove leftovers after a crash. Unexpected exit is surfaced as `crashed` with a
-message and is not auto-restarted.
-
-The Hub binds loopback by default. Docker is opt-in and capability-detected; if
-the configured engine is unavailable, Preview routes are disabled with an
-honest warning and the Hub continues to run. CI and broker tests use the mock
-engine and require no Docker.
+The Phase 2 Preview Deck was removed on 2026-07-17; the Hub no longer ships any
+preview routes, engines, or config. Its shipped security boundary (declared
+specs only, ephemeral non-Item previews, trusted-iframe lane, bounded and
+disposable lifecycle) is preserved in git history at commit `2e60875` and in
+ADR-0014 through ADR-0017.
 
 ## Free-Form Intent (Phase 3)
 
@@ -270,8 +234,7 @@ stay retryable.
 ## Future Labs Isolation
 
 The HL2 lab is deliberately isolated from product clients and remains without
-physical-device verification; spatial product panels, delegation depth, and the
-untrusted Preview pixels lane remain future Labs work.
-Preview Deck's shipped Phase 2 security boundary is described above and in
-`docs/preview-deck.md`; the forward plan for later spatial and arbitrary-app
+physical-device verification; spatial product panels and delegation depth
+remain future Labs work.
+The forward plan for later spatial and arbitrary-app
 surfaces remains in `docs/build/90-later-phases-outline.md`.

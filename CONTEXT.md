@@ -172,46 +172,10 @@ Located by config URL, pluggable, not an Adapter (it produces no Items).
 See ADR-0013.
 _Avoid_: STT adapter, TTS adapter, speech engine.
 
-### Preview Deck (Phase 2, legacy)
+### Preview Deck (Phase 2, removed)
 
-The Preview Deck is real, tested, opt-in code, but it sits beside the world-model and never feeds it - a different product from ambient supervision.
-It is retained for reference during the pivot and is out of the north-star path; new work should not build on it.
-Its vocabulary is preserved below unchanged.
-
-**Preview Deck**:
-The Hub subsystem plus flat cockpit surface that boots, isolates, and shows disposable previews of declared agent/dev output.
-Labs/experimental and opt-in; it sits beside the world-model and never feeds it.
-See ADR-0015.
-_Avoid_: sandbox panel, preview pane (informal only), preview manager.
-
-**Preview**:
-One live, ephemeral, origin-isolated rendering of a single booted Preview spec - `booting → ready → crashed → stopped`, then disposed.
-Explicitly **not** an Item: never persistent, never ranked, never in needs-me.
-_Avoid_: preview item, instance (informal only), session.
-
-**Preview spec**:
-The declared recipe for a Preview - a registry entry naming the engine, the already-built image or compose to run, the port, a Trust lane, and an optional Item binding.
-Aspex *boots* a spec; it never computes or builds one.
-See ADR-0014.
-_Avoid_: preview config, recipe, manifest.
-
-**Preview broker**:
-The Hub subsystem that boots Preview specs through a Preview engine, tracks each Preview's state, enforces the bounds (max-concurrent, CPU/memory, idle TTL), and reaps every container it spawned.
-The Preview-Deck analogue of the Voice gateway.
-See ADR-0017.
-_Avoid_: orchestrator, supervisor, container manager.
-
-**Preview engine**:
-The pluggable backend that actually runs a Preview spec - Docker via the `docker` CLI in v1, a mock for tests, E2B/microsandbox later.
-Selected by config; not an Adapter (it produces no Items).
-_Avoid_: runtime, sandbox provider, docker driver.
-
-**Trust lane**:
-Which surfacing path a Preview uses.
-v1 ships the **trusted-iframe lane** only - a first-party server rendered in a cross-origin, sandboxed iframe with no Hub credentials.
-The **pixels lane** (neko/WebRTC or screenshots) for untrusted/arbitrary output is deferred; until it lands, `untrusted` specs are not bootable.
-See ADR-0016.
-_Avoid_: preview mode, render path.
+The Preview Deck booted disposable, origin-isolated previews of declared agent/dev output beside the world-model, and never fed it - a different product from ambient supervision.
+It was removed on 2026-07-17; the implementation and its vocabulary (Preview, Preview spec, Preview broker, Preview engine, Trust lane) are recoverable from git history at commit `2e60875` and remain described in ADR-0014 through ADR-0017.
 
 ### Free-form intent (Phase 3)
 
@@ -228,7 +192,7 @@ _Avoid_: natural-language understanding, NLU, free-text command, prompt.
 
 **Intent service**:
 The pluggable local-LLM backend the [[Voice gateway]] calls to map an unmatched utterance plus its [[Voice context]] into a constrained Intent - Ollama via per-request JSON-Schema (GBNF-enforced) structured outputs in v1, a mock for tests.
-Reached over a generic HTTP contract by config URL; **not an Adapter** (it produces no Items), the delegation-side analogue of a [[Voice service]] and a [[Preview engine]].
+Reached over a generic HTTP contract by config URL; **not an Adapter** (it produces no Items), the delegation-side analogue of a [[Voice service]].
 See ADR-0019.
 _Avoid_: LLM adapter, model adapter, NLU engine, reasoner.
 
