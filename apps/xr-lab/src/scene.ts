@@ -1,5 +1,11 @@
 import type { AttentionItem } from "@aspex/schema";
 import * as THREE from "three";
+import {
+  CapabilityPublisher,
+  type InputSourceLike,
+  type SessionCapabilities,
+  focusRayEligible,
+} from "./capabilities";
 import type { ArmedAction } from "./confirmation";
 import type { ConnectionState } from "./domain";
 import type { FocusController } from "./input";
@@ -30,7 +36,10 @@ export class LabScene {
   private readonly root = new THREE.Group();
   private readonly targetMeshes: THREE.Mesh[] = [];
   private readonly controllers: THREE.Group[] = [];
-  private readonly controllerConnected: boolean[] = [];
+  private readonly controllerSources: (InputSourceLike | null)[] = [];
+  private readonly capabilities = new CapabilityPublisher((capabilities) =>
+    this.onCapabilities(capabilities),
+  );
   private readonly raycaster = new THREE.Raycaster();
   private readonly pointer = new THREE.Vector2();
   private readonly reticle: THREE.Mesh;
@@ -42,6 +51,8 @@ export class LabScene {
     container: HTMLElement,
     private input: FocusController,
     private onSessionChange: (active: boolean) => void,
+    private onCapabilities: (capabilities: SessionCapabilities) => void = () =>
+      undefined,
   ) {
     this.renderer = new THREE.WebGLRenderer({
       alpha: true,
@@ -78,12 +89,17 @@ export class LabScene {
       // Controller groups exist (visible, at the identity transform) before
       // any input source connects; on-device the unused slots would raycast
       // from the origin straight through the panel and pin focus, so only
-      // connected controllers may drive the focus ray.
-      controller.addEventListener("connected", () => {
-        this.controllerConnected[index] = true;
+      // slots with a classified connected input source may drive the focus
+      // ray. The connected source is kept, not just a boolean, so the scene
+      // can adapt to whatever inputs the device actually offers.
+      controller.addEventListener("connected", (event) => {
+        this.setControllerSource(
+          index,
+          (event as { data?: InputSourceLike }).data ?? null,
+        );
       });
       controller.addEventListener("disconnected", () => {
-        this.controllerConnected[index] = false;
+        this.setControllerSource(index, null);
       });
       controller.addEventListener("selectstart", () =>
         this.input.selectStart(),
@@ -91,7 +107,7 @@ export class LabScene {
       controller.addEventListener("select", () => this.input.select());
       controller.addEventListener("selectend", () => this.input.selectEnd());
       this.controllers.push(controller);
-      this.controllerConnected.push(false);
+      this.controllerSources.push(null);
       this.scene.add(controller);
     }
 
@@ -157,6 +173,8 @@ export class LabScene {
     this.session = session;
     session.addEventListener("end", () => {
       this.session = null;
+      this.controllerSources.fill(null);
+      this.publishCapabilities();
       this.input.cancelHold();
       this.resize();
       this.onSessionChange(false);
@@ -168,6 +186,27 @@ export class LabScene {
 
   async exitAr(): Promise<void> {
     await this.session?.end();
+  }
+
+  sessionCapabilities(): SessionCapabilities {
+    return this.capabilities.current();
+  }
+
+  private setControllerSource(
+    index: number,
+    source: InputSourceLike | null,
+  ): void {
+    this.controllerSources[index] = source;
+    this.publishCapabilities();
+  }
+
+  private publishCapabilities(): void {
+    this.capabilities.publish(
+      this.controllerSources.filter(
+        (source): source is InputSourceLike => source !== null,
+      ),
+      this.session !== null,
+    );
   }
 
   private rebuild(): void {
@@ -294,7 +333,7 @@ export class LabScene {
 
     context.fillStyle = "#8fa096";
     context.font = "600 34px system-ui, sans-serif";
-    context.fillText(item?.project.toUpperCase() ?? "ASPEX HL2 LAB", 50, 60);
+    context.fillText(item?.project.toUpperCase() ?? "ASPEX XR LAB", 50, 60);
     context.textAlign = "right";
     context.fillText(
       view.total === 0
@@ -417,7 +456,13 @@ export class LabScene {
     if (this.renderer.xr.isPresenting) {
       let nearest: THREE.Intersection | undefined;
       for (const [index, controller] of this.controllers.entries()) {
-        if (this.controllerConnected[index] !== true || !controller.visible) {
+        const source = this.controllerSources[index];
+        if (
+          source === null ||
+          source === undefined ||
+          !focusRayEligible(source) ||
+          !controller.visible
+        ) {
           continue;
         }
         controller.updateMatrixWorld(true);

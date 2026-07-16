@@ -2,7 +2,7 @@
 
 This document describes the security stance as shipped through Phase 3 and the
 orchestrator protocol core. It is scoped to the local Hub, web cockpit, desktop
-shell, Phase 0 adapters, the Phase 1 flat voice loop, the isolated HoloLens 2
+shell, Phase 0 adapters, the Phase 1 flat voice loop, the isolated device-neutral
 WebXR lab, Phase 3 free-form intent plus observe-only agent adapters, and the
 Hub-side orchestrator direction channel.
 
@@ -58,7 +58,7 @@ variable to every local caller that should reach the Hub, such as Claude Code
 hook relay processes, because env tokens are intentionally not persisted.
 
 Clients send `Authorization: Bearer <token>`.
-Both first-party clients (the HL2 lab and the legacy web cockpit) consume the SSE stream over fetch-based SSE and send that same header.
+Both first-party clients (the XR lab and the legacy web cockpit) consume the SSE stream over fetch-based SSE and send that same header.
 The stream also still accepts the token as a `?token=` query parameter, but that form is deprecated: it remains only as the escape hatch for native `EventSource` clients, which cannot set headers, and its removal is deferred until after the owner's on-device wear test.
 The tradeoff is that a query-string token can leak into logs, which is accepted for a local stream today and a future private-tailnet stream.
 The token is compared in constant time over fixed-length digests, and a missing or wrong token returns `401`.
@@ -104,10 +104,10 @@ The cockpit must not look current when it is not. Polled sources use poll health
 for liveness. Push sources use heartbeat freshness. Terminal states do not
 decay. This follows ADR-0003.
 
-## Voice (Phase 1) and the HL2 lab
+## Voice (Phase 1) and the XR lab
 
 Voice is opt-in and the supported product surface is flat only.
-The HoloLens 2 WebXR client is an unsupported lab instrument that reuses the
+The device-neutral WebXR lab client (`apps/xr-lab`) is an unsupported lab instrument that reuses the
 same Hub voice path; it does not make a headset product surface supported or
 claim that the physical microphone gate has passed.
 
@@ -233,7 +233,7 @@ stay retryable.
 
 ## Future Labs Isolation
 
-The HL2 lab is deliberately isolated from product clients and remains without
+The XR lab is deliberately isolated from product clients and remains without
 physical-device verification; spatial product panels and delegation depth
 remain future Labs work.
 The forward plan for later spatial and arbitrary-app

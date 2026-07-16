@@ -20,7 +20,7 @@ export interface AspexConfig {
   // by default; set to the dev box's tailnet address to serve enrolled
   // devices (the glasses). Never a public interface by default.
   hubBind: string;
-  // One extra exact origin allowed by CORS, e.g. the HL2 Edge client's
+  // One extra exact origin allowed by CORS, e.g. the XR lab client's
   // origin, alongside the built-in tauri://localhost and http://localhost:*.
   corsOrigin?: string;
   dbPath: string;

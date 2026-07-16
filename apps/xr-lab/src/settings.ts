@@ -1,7 +1,7 @@
 import type { HubConnectionConfig } from "./hubClient";
 
-const HUB_URL_KEY = "aspex.hl2-lab.hub-url";
-const HUB_TOKEN_KEY = "aspex.hl2-lab.hub-token";
+const HUB_URL_KEY = "aspex.xr-lab.hub-url";
+const HUB_TOKEN_KEY = "aspex.xr-lab.hub-token";
 const DEFAULT_HUB_URL = "http://127.0.0.1:4317";
 
 export class PairingSettings {

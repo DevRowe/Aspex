@@ -5,8 +5,9 @@ and server-side: the web client records one Utterance, sends audio plus Voice
 context to the Hub, and the Hub performs STT, command grammar parsing, session
 reduction, action dispatch, and read-back.
 
-The supported product surface remains flat; the isolated HoloLens 2 WebXR lab
-reuses this grammar and protocol solely as a hardware design instrument.
+The supported product surface remains flat; the isolated device-neutral WebXR
+lab (`apps/xr-lab`) reuses this grammar and protocol solely as a hardware
+design instrument.
 It does not make a spatial client a supported product surface or satisfy the
 physical WebXR microphone verification gate.
 

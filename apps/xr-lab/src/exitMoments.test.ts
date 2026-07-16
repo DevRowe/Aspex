@@ -9,7 +9,7 @@ type Pending =
   | { kind: "action"; operation: LogicalAction }
   | { kind: "dispatch"; operation: LogicalDispatch };
 
-describe("the three HL2 lab exit moments with a non-writing Hub double", () => {
+describe("the three XR lab exit moments with a non-writing Hub double", () => {
   test("1: blocked item approve arms on 409 and delivers only after the second confirm", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const client = doubleClient(bodies);

@@ -77,7 +77,7 @@ describe("VoiceController", () => {
     expect(request?.url).toBe("https://hub.test/voice/utterance");
     expect(request?.headers.get("authorization")).toBe("Bearer token");
     expect(request?.headers.get("x-aspex-voice-session")).toMatch(
-      /^hl2-.*-voice-session-/,
+      /^xrlab-.*-voice-session-/,
     );
   });
 
