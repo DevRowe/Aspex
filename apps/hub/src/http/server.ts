@@ -134,7 +134,7 @@ export function buildApp(deps: ServerDeps): Hono {
     return problem(c, {
       status: 500,
       title: "Internal Server Error",
-      detail: error instanceof Error ? error.message : "Internal Server Error",
+      detail: "Internal error",
     });
   });
 

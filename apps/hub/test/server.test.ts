@@ -517,8 +517,8 @@ describe("hub HTTP server", () => {
       type: "about:blank",
       title: "Internal Server Error",
       status: 500,
-      detail: "adapter exploded",
-      message: "adapter exploded",
+      detail: "Internal error",
+      message: "Internal error",
     });
     db.close();
   });
