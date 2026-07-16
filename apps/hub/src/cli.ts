@@ -604,6 +604,9 @@ async function runHub(options: {
     server = Bun.serve({
       hostname: cfg.hubBind,
       port: cfg.hubPort,
+      // Must exceed the SSE ping interval (15 s); Bun's 10 s default severs
+      // the /stream connection before the first keepalive can fire.
+      idleTimeout: 30,
       ...(tls === undefined ? {} : { tls }),
       fetch: hub.app.fetch,
     });
