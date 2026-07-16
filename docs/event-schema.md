@@ -327,9 +327,9 @@ not contain `confirm`, `dictation_body`, `post`, or `cancel`.
 All Hub HTTP and SSE endpoints require the local bearer token from
 `~/.aspex/config.json` under `auth.token`, or the value supplied through
 `ASPEX_HUB_TOKEN`.
-Most requests send `Authorization: Bearer <token>`.
-The SSE stream sends the same token as `?token=<token>` because browser
-`EventSource` cannot set request headers.
+Requests send `Authorization: Bearer <token>`, including the SSE stream.
+The stream's deprecated `?token=<token>` query form remains only as the
+native-`EventSource` escape hatch (see ADR-0023's amendment).
 `POST /webhooks/cursor` is the only bearer-token exemption because it verifies
 its own HMAC signature.
 See [ADR-0023](adr/0023-hub-api-requires-a-local-bearer-token.md).

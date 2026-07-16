@@ -3,7 +3,7 @@
 Aspex is the augmented-reality layer for directing coding agents: a presentation + interaction layer that aggregates the live state of many agents across many projects into one attention-ranked view, surfaces it wherever you are (glance-tier cards and voice now, spatial panels on Aura-class glasses later), and directs them by handing intents to an orchestrator.
 It is the **face and the protocol, never the orchestrator** - a chief-of-staff orchestrator (Giles is the first and reference backend) owns the agents; Aspex renders, ranks, and directs.
 
-Honest state of the code: the Hub, world-model, ranking, liveness, HTTP/SSE protocol, and voice loop are built and tested, and they are presentation-agnostic (an AR client speaks to them over `EventSource` + `fetch` today).
+Honest state of the code: the Hub, world-model, ranking, liveness, HTTP/SSE protocol, and voice loop are built and tested, and they are presentation-agnostic (an AR client speaks to them over `fetch` today, including fetch-based SSE for the stream).
 The Hub-side half of the outbound direction channel is now built too: the Orchestrator contract, the direction verbs, and the reference Giles adapter (design report: giles task `aspex-protocol-design-d1`); the Giles-side consumer is a parallel build against the same design.
 GitHub and the Giles orchestrator are the only two-way surfaces; every coding-agent adapter is observe-only and offers a Deep-link, not an Action.
 The Giles direction channel only queues intent files for Giles to execute through its own sanctioned helpers; Aspex itself never mutates a project.
