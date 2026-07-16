@@ -106,6 +106,9 @@ export function createStateStream({
       };
 
       sendEvent("state", snapshot());
+      if (closed) {
+        return;
+      }
       unsubscribe = subscribe(write);
       for (const event of events) {
         extraUnsubscribers.push(

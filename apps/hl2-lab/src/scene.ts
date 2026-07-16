@@ -415,7 +415,7 @@ export class LabScene {
 
   private renderFrame(): void {
     if (this.renderer.xr.isPresenting) {
-      let hit = false;
+      let nearest: THREE.Intersection | undefined;
       for (const [index, controller] of this.controllers.entries()) {
         if (this.controllerConnected[index] !== true || !controller.visible) {
           continue;
@@ -425,29 +425,39 @@ export class LabScene {
         this.raycaster.ray.direction
           .set(0, 0, -1)
           .transformDirection(controller.matrixWorld);
-        hit = this.applyRaycast() || hit;
+        const intersection = this.raycaster.intersectObjects(
+          this.targetMeshes,
+          false,
+        )[0];
+        if (
+          intersection !== undefined &&
+          (nearest === undefined || intersection.distance < nearest.distance)
+        ) {
+          nearest = intersection;
+        }
       }
-      if (!hit) {
-        this.input.focus(null);
-      }
+      this.applyIntersection(nearest);
     }
     this.renderer.render(this.scene, this.camera);
   }
 
-  private applyRaycast(): boolean {
-    const intersection = this.raycaster.intersectObjects(
-      this.targetMeshes,
-      false,
-    )[0];
+  private applyRaycast(): void {
+    this.applyIntersection(
+      this.raycaster.intersectObjects(this.targetMeshes, false)[0],
+    );
+  }
+
+  private applyIntersection(
+    intersection: THREE.Intersection | undefined,
+  ): void {
     if (intersection === undefined) {
       this.input.focus(null);
       this.reticle.position.set(0, 0, PANEL_Z + 0.02);
-      return false;
+      return;
     }
     this.input.focus(intersection.object.userData.targetId as string);
     this.reticle.position.copy(intersection.point);
     this.reticle.position.z += 0.018;
-    return true;
   }
 
   private resize(): void {
