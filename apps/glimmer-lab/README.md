@@ -4,7 +4,7 @@ A minimal Android client that renders the Aspex attention carousel as a Glimmer 
 It is a phone-resident app: all logic (Hub connection, ranking consumption, confirm flow) runs on the phone, and Jetpack Projected projects the rendered UI onto the glasses display.
 This is the monorepo's first non-Bun app; it is a self-contained Gradle project, deliberately not wired into `bun test`/`bun run typecheck`.
 
-Like `apps/hl2-lab`, this is an unsupported lab instrument, not a product target.
+Like `apps/xr-lab`, this is an unsupported lab instrument, not a product target.
 Glimmer's stated design principles are the design contract here: glanceable not immersive, reality wins, and every read should complete in 2-3 seconds.
 
 ## What it does
