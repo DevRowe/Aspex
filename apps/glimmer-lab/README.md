@@ -48,7 +48,7 @@ Follow the [official AVD guide](https://developer.android.com/develop/xr/jetpack
 
 ## Run steps
 
-1. Start the Hub on the host: `bun run --cwd apps/hub dev`. Note the token from `~/.aspex/config.json` (`hubToken`) or `ASPEX_HUB_TOKEN`.
+1. Start the Hub on the host: `bun run --cwd apps/hub dev`. Note the token from `~/.aspex/config.json` (`auth.token`) or `ASPEX_HUB_TOKEN`.
 2. Point the app at the Hub. Defaults are `http://10.0.2.2:4317` (the emulator's alias for host loopback) and an empty token; override without touching the repo via `~/.gradle/gradle.properties` or the CLI:
 
    ```sh
