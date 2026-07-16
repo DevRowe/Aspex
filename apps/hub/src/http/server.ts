@@ -151,6 +151,7 @@ export function buildApp(deps: ServerDeps): Hono {
         "Authorization",
         "Content-Type",
         "Idempotency-Key",
+        "Last-Event-ID",
         "X-Aspex-Voice-Session",
         "X-Aspex-Voice-Generation",
       ],

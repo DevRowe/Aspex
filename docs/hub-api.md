@@ -57,8 +57,9 @@ If the gate ever migrates to a 202 + pending-approval resource, this problem typ
 Direction intents are deduplicated by a client-generated intent id (design 2.6).
 Protocol v1.1 aligns the surface with the IETF `Idempotency-Key` header draft while keeping the body `intentId` as the domain id (it names the orchestrator inbox file):
 
-- The key may arrive as the body `intentId`, as an `Idempotency-Key` header (bare or quoted), or both; when both are present they must agree (else 400 `idempotency-key-mismatch`).
+- On `POST /actions/:itemId/:actionId` the key may arrive as the body `intentId`, as an `Idempotency-Key` header (bare or quoted), or both; when both are present they must agree (else 400 `idempotency-key-mismatch`).
   Keys use the intent-id alphabet: 1-128 characters of `[A-Za-z0-9._-]`, no leading dot.
+- On `POST /intents` the body `intentId` is mandatory: intent validation rejects a body without it (400 "Invalid DirectionIntent") before the header is consulted, so the header cannot stand alone there - it is agreement-only.
 - A retry with the same key and the same payload replays the recorded response and sets `Idempotency-Replayed: true`; a concurrent duplicate joins the in-flight request (same marker) instead of racing it.
 - The same key with a different payload is refused with 422 `same-key-different-payload`.
   Payload comparison is a stored key-order-insensitive fingerprint of the request, so re-serialization is safe but any content change is a conflict.

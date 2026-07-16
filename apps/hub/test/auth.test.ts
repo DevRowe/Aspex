@@ -161,6 +161,7 @@ describe("hub API auth", () => {
         headers: {
           Origin: "http://localhost:5173",
           "Access-Control-Request-Method": "GET",
+          "Access-Control-Request-Headers": "authorization, last-event-id",
         },
       }),
     );
@@ -170,7 +171,7 @@ describe("hub API auth", () => {
       "http://localhost:5173",
     );
     expect(response.headers.get("access-control-allow-headers")).toBe(
-      "Authorization,Content-Type,Idempotency-Key,X-Aspex-Voice-Session,X-Aspex-Voice-Generation",
+      "Authorization,Content-Type,Idempotency-Key,Last-Event-ID,X-Aspex-Voice-Session,X-Aspex-Voice-Generation",
     );
     db.close();
   });
