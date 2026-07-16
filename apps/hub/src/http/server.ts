@@ -38,7 +38,11 @@ import {
   problemBody,
   problemResponse,
 } from "./problems";
-import { createSseBroadcaster, createStateStream } from "./sse";
+import {
+  type SseBroadcaster,
+  createSseBroadcaster,
+  createStateStream,
+} from "./sse";
 import { registerVoiceRoutes } from "./voice";
 
 // Wire-protocol version advertised in GET /state (protocol v1.1, B7): the
@@ -80,6 +84,10 @@ export interface ServerDeps {
   // Shared idempotency ledger for /intents and /actions (design 2.6). The
   // boot path supplies one so it survives app rebuilds.
   intentLedger?: IntentLedger;
+  // Shared SSE broadcaster (createHubBroadcaster). The boot path supplies one
+  // so an app rebuild neither orphans a permanently-subscribed broadcaster on
+  // the bus nor resets the replay ring and id counter.
+  sseBroadcaster?: SseBroadcaster;
   voiceGateway?: VoiceGateway;
   voice?: {
     enabled: boolean;
@@ -97,8 +105,37 @@ export interface ServerDeps {
   };
 }
 
+// One broadcaster per Hub process: each world event is ranked and encoded
+// exactly once for every connected /stream client, gets a monotonic id, and
+// lands in the bounded replay ring. The bus subscription is permanent (not
+// attached per client) because Last-Event-ID resume only works if events that
+// fired while no client was connected are still in the ring. Ids are seeded
+// from the boot time so a Last-Event-ID from a previous run never aliases
+// into this run's range.
+export function createHubBroadcaster(
+  deps: Pick<ServerDeps, "worldModel" | "bus" | "cap">,
+): SseBroadcaster {
+  const broadcaster = createSseBroadcaster({ epoch: Date.now() });
+  deps.bus.on("world:changed", () =>
+    broadcaster.publish("state", stateSnapshot(deps)),
+  );
+
+  return broadcaster;
+}
+
 export function buildApp(deps: ServerDeps): Hono {
   const app = new Hono();
+
+  // Framework fallbacks speak the same problem+json contract as every
+  // hand-written error body (docs/hub-api.md).
+  app.notFound((c) => problem(c, { status: 404, title: "Not Found" }));
+  app.onError((error, c) =>
+    problem(c, {
+      status: 500,
+      title: "Internal Server Error",
+      detail: error instanceof Error ? error.message : "Internal Server Error",
+    }),
+  );
 
   app.use(
     "*",
@@ -145,15 +182,7 @@ export function buildApp(deps: ServerDeps): Hono {
 
   app.get("/state", (c) => c.json(stateSnapshot(deps)));
 
-  // One broadcaster per app: each world event is ranked and encoded exactly
-  // once for every connected /stream client, gets a monotonic id, and lands
-  // in the bounded replay ring. The bus subscription is permanent (not
-  // attached per client) because Last-Event-ID resume only works if events
-  // that fired while no client was connected are still in the ring.
-  const broadcaster = createSseBroadcaster();
-  deps.bus.on("world:changed", () =>
-    broadcaster.publish("state", stateSnapshot(deps)),
-  );
+  const broadcaster = deps.sseBroadcaster ?? createHubBroadcaster(deps);
 
   app.get("/stream", (c) => {
     const stream = createStateStream({
@@ -566,7 +595,7 @@ function registerCursorWebhookRoute(app: Hono, deps: ServerDeps): void {
   });
 }
 
-function stateSnapshot(deps: ServerDeps) {
+function stateSnapshot(deps: Pick<ServerDeps, "worldModel" | "cap">) {
   return {
     apiVersion: HUB_API_VERSION,
     ...rank(deps.worldModel.snapshot(), deps.cap),

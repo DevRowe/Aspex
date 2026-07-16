@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test";
 import type { ActionResult } from "@aspex/schema";
 import { Bus } from "../src/bus";
 import { enforceOwnership } from "../src/engine/attention";
-import { type ServerDeps, buildApp } from "../src/http/server";
+import {
+  type ServerDeps,
+  buildApp,
+  createHubBroadcaster,
+} from "../src/http/server";
 import {
   type SseBroadcaster,
   createSseBroadcaster,
@@ -281,9 +285,13 @@ describe("hub HTTP server", () => {
     const update = await reader?.read();
     await reader?.cancel();
 
-    expect(decode(initial?.value)).toContain("retry: ");
-    expect(decode(initial?.value)).toContain("id: 0\nevent: state\ndata:");
-    expect(decode(update?.value)).toContain("id: 1\nevent: state\ndata:");
+    const initialText = decode(initial?.value);
+    const initialId = sseId(initialText);
+    expect(initialText).toContain("retry: ");
+    expect(initialText).toContain(`id: ${initialId}\nevent: state\ndata:`);
+    expect(decode(update?.value)).toContain(
+      `id: ${initialId + 1}\nevent: state\ndata:`,
+    );
     expect(decode(update?.value)).toContain("codex:session:blocked");
     db.close();
   });
@@ -371,6 +379,19 @@ describe("hub HTTP server", () => {
     expect(broadcaster.replaySince(99)).toBeNull();
   });
 
+  test("broadcaster ids count up from the epoch and older ids cannot resume", () => {
+    const broadcaster = createSseBroadcaster({ epoch: 1_000 });
+
+    broadcaster.publish("state", { n: 1 });
+
+    expect(broadcaster.lastEventId()).toBe(1_001);
+    // An id from a run with an earlier epoch falls back to the snapshot.
+    expect(broadcaster.replaySince(999)).toBeNull();
+    expect(broadcaster.replaySince(1_000)).toEqual([
+      'id: 1001\nevent: state\ndata: {"n":1}\n\n',
+    ]);
+  });
+
   test("GET /stream honors Last-Event-ID with replay, snapshot fallback when too old", async () => {
     const { app, db, worldModel } = openServer();
 
@@ -389,20 +410,27 @@ describe("hub HTTP server", () => {
       summary: "Second",
     });
 
-    // Reconnect that saw id 1: gets only the missed frame, no snapshot.
+    // Learn the current id from a fresh connect's stamped snapshot.
+    const current = await app.fetch(new Request("http://hub.test/stream"));
+    const currentReader = current.body?.getReader();
+    const lastId = sseId(decode((await currentReader?.read())?.value));
+    await currentReader?.cancel();
+
+    // Reconnect that saw the previous id: gets only the missed frame.
     const resumed = await app.fetch(
       new Request("http://hub.test/stream", {
-        headers: { "Last-Event-ID": "1" },
+        headers: { "Last-Event-ID": `${lastId - 1}` },
       }),
     );
     const resumedReader = resumed.body?.getReader();
     const resumedChunk = decode((await resumedReader?.read())?.value);
     await resumedReader?.cancel();
     expect(resumedChunk).toContain("retry: ");
-    expect(resumedChunk).toContain("id: 2\nevent: state\ndata:");
-    expect(resumedChunk).not.toContain("id: 1\n");
+    expect(resumedChunk).toContain(`id: ${lastId}\nevent: state\ndata:`);
+    expect(resumedChunk).not.toContain(`id: ${lastId - 1}\n`);
 
-    // Unknown/too-old id: fresh snapshot stamped with the current id.
+    // An id below the boot-time epoch (a previous Hub run): fresh snapshot
+    // stamped with the current id.
     const stale = await app.fetch(
       new Request("http://hub.test/stream", {
         headers: { "Last-Event-ID": "999" },
@@ -411,8 +439,87 @@ describe("hub HTTP server", () => {
     const staleReader = stale.body?.getReader();
     const staleChunk = decode((await staleReader?.read())?.value);
     await staleReader?.cancel();
-    expect(staleChunk).toContain("id: 2\nevent: state\ndata:");
+    expect(staleChunk).toContain(`id: ${lastId}\nevent: state\ndata:`);
     expect(staleChunk).toContain("codex:session:two");
+    db.close();
+  });
+
+  test("a supplied broadcaster is shared across app rebuilds without double-publishing", () => {
+    const db = openDb(":memory:");
+    const bus = new Bus();
+    const worldModel = new WorldModel(new ItemStore(db), bus, {
+      deriveAttention: enforceOwnership,
+      deriveLiveness: (item) => item,
+    });
+    const sseBroadcaster = createHubBroadcaster({ worldModel, bus, cap: 7 });
+    const deps: ServerDeps = {
+      worldModel,
+      bus,
+      cap: 7,
+      version: "test",
+      actionMeta: () => ({ requiresConfirmation: false }),
+      dispatchAction: async () => ({ ok: true, message: "dispatched" }),
+      sseBroadcaster,
+    };
+
+    buildApp(deps);
+    buildApp(deps);
+
+    const before = sseBroadcaster.lastEventId();
+    worldModel.applySignal({
+      id: "codex:session:rebuild",
+      source: "codex",
+      project: "aspex",
+      state: "blocked",
+      summary: "Rebuild",
+    });
+
+    expect(sseBroadcaster.lastEventId()).toBe(before + 1);
+    db.close();
+  });
+
+  test("an unknown route answers problem+json 404", async () => {
+    const { app, db } = openServer();
+
+    const response = await app.fetch(new Request("http://hub.test/nope"));
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("content-type")).toContain(
+      "application/problem+json",
+    );
+    expect(await response.json()).toMatchObject({
+      type: "about:blank",
+      title: "Not Found",
+      status: 404,
+      message: "Not Found",
+    });
+    db.close();
+  });
+
+  test("an unhandled route error answers problem+json 500", async () => {
+    const { app, db } = openServer({
+      dispatchAction: async () => {
+        throw new Error("adapter exploded");
+      },
+    });
+
+    const response = await app.fetch(
+      new Request("http://hub.test/actions/item-1/restart", {
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(500);
+    expect(response.headers.get("content-type")).toContain(
+      "application/problem+json",
+    );
+    expect(await response.json()).toMatchObject({
+      type: "about:blank",
+      title: "Internal Server Error",
+      status: 500,
+      detail: "adapter exploded",
+      message: "adapter exploded",
+    });
     db.close();
   });
 
@@ -520,4 +627,14 @@ function fakeBroadcaster(overrides: Partial<SseBroadcaster>): SseBroadcaster {
 
 function decode(value: Uint8Array | undefined): string {
   return new TextDecoder().decode(value);
+}
+
+function sseId(frame: string): number {
+  const match = /(?:^|\n)id: (\d+)\n/.exec(frame);
+
+  if (match?.[1] === undefined) {
+    throw new Error(`frame carries no id: ${frame}`);
+  }
+
+  return Number(match[1]);
 }

@@ -35,12 +35,17 @@ export interface SseBroadcaster {
 }
 
 export function createSseBroadcaster(
-  options: { bufferSize?: number } = {},
+  options: { bufferSize?: number; epoch?: number } = {},
 ): SseBroadcaster {
   const bufferSize = options.bufferSize ?? DEFAULT_REPLAY_BUFFER_SIZE;
   const ring: Array<{ id: number; frame: string }> = [];
   const listeners = new Set<(frame: string) => void>();
-  let lastId = 0;
+  // Ids count up from the epoch. The Hub seeds it from the boot time so an id
+  // issued by a previous run can never alias into this run's range: it is
+  // either below the epoch or above lastId, and both fall back to a fresh
+  // snapshot instead of a bogus same-run resume.
+  const epoch = options.epoch ?? 0;
+  let lastId = epoch;
 
   return {
     publish(event, data) {
@@ -73,13 +78,13 @@ export function createSseBroadcaster(
         return [];
       }
 
-      // An id from the future (a previous Hub run) or one older than the
-      // ring's tail cannot be replayed gaplessly.
+      // An id outside this run's range (a previous Hub run) or one older
+      // than the ring's tail cannot be replayed gaplessly.
       const oldest = ring[0];
 
       if (
         lastEventId > lastId ||
-        lastEventId < 0 ||
+        lastEventId < epoch ||
         oldest === undefined ||
         lastEventId < oldest.id - 1
       ) {

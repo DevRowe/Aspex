@@ -82,7 +82,7 @@ Resumability (the same mechanism MCP's Streamable HTTP transport builds on):
 - On reconnect, send `Last-Event-ID` (native `EventSource` does this automatically).
   If the id is still inside the Hub's bounded replay ring (256 events), you receive exactly the missed events and no snapshot; otherwise you receive a fresh `state` snapshot stamped with the current id.
   Either way the stream is consistent after the first frame - clients need no special resume logic.
-- Ids restart at 0 when the Hub restarts; a stale id from a previous run safely falls back to the fresh snapshot.
+- Ids are seeded from the Hub's boot time, so an id from a previous run never lands inside the new run's range; a stale id from a previous run safely falls back to the fresh snapshot.
 
 ## TLS on the tailnet exposure
 
