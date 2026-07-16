@@ -129,7 +129,14 @@ private fun ConfirmCard(
 ) {
     ActionCard(
         title = { Text("Confirm: ${confirm.action.label}?") },
-        subtitle = { Text(confirm.item.project, maxLines = 1) },
+        subtitle = {
+            val note = confirm.failureNote
+            if (note != null) {
+                Text(note, color = GlimmerTheme.colors.negative, maxLines = 1)
+            } else {
+                Text(confirm.item.project, maxLines = 1)
+            }
+        },
         action = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onConfirm) { Text("Confirm") }

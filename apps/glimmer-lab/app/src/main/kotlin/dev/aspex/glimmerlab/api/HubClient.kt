@@ -3,6 +3,8 @@ package dev.aspex.glimmerlab.api
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -39,6 +41,13 @@ class HubClient(
         .connectTimeout(10, TimeUnit.SECONDS)
         // SSE stream: no read timeout, the Hub pushes frames indefinitely.
         .readTimeout(0, TimeUnit.MILLISECONDS)
+        .build()
+
+    // Unary calls need real timeouts so a stalled Hub cannot pin the UI on
+    // InFlight forever; shares the SSE client's connection pool.
+    private val unaryClient = httpClient.newBuilder()
+        .readTimeout(15, TimeUnit.SECONDS)
+        .callTimeout(20, TimeUnit.SECONDS)
         .build()
 
     private fun request(path: String): Request.Builder {
@@ -120,7 +129,7 @@ class HubClient(
             .post(body.toString().toRequestBody(jsonMediaType))
             .build()
 
-        return runCatching { httpClient.newCall(httpRequest).await() }.fold(
+        return runCatching { unaryClient.newCall(httpRequest).await() }.fold(
             onSuccess = { (code, text) ->
                 when {
                     code == 200 -> ActionOutcome.Success(text)
@@ -130,7 +139,10 @@ class HubClient(
                     else -> ActionOutcome.Failure(code, text)
                 }
             },
-            onFailure = { ActionOutcome.Failure(0, it.message ?: "request failed") },
+            onFailure = {
+                if (it is CancellationException) throw it
+                ActionOutcome.Failure(0, it.message ?: "request failed")
+            },
         )
     }
 
@@ -145,14 +157,17 @@ class HubClient(
             .post(body.toString().toRequestBody(jsonMediaType))
             .build()
 
-        return runCatching { httpClient.newCall(httpRequest).await() }.fold(
+        return runCatching { unaryClient.newCall(httpRequest).await() }.fold(
             onSuccess = { (code, text) ->
                 if (code == 200) StatusQueryOutcome.Report(text)
                 // 404 covers both "no orchestrator configured" (route absent)
                 // and an unknown scope; either way there is nothing to read.
                 else StatusQueryOutcome.Unavailable("status query unavailable (http $code)")
             },
-            onFailure = { StatusQueryOutcome.Unavailable(it.message ?: "request failed") },
+            onFailure = {
+                if (it is CancellationException) throw it
+                StatusQueryOutcome.Unavailable(it.message ?: "request failed")
+            },
         )
     }
 }
@@ -161,14 +176,14 @@ private suspend fun Call.await(): Pair<Int, String> =
     suspendCancellableCoroutine { continuation ->
         enqueue(object : Callback {
             override fun onResponse(call: Call, response: Response) {
-                val text = response.use { it.body.string() }
-                continuation.resume(response.code to text)
+                runCatching { response.use { it.code to it.body.string() } }.fold(
+                    onSuccess = { continuation.resume(it) },
+                    onFailure = { continuation.resumeWithException(it) },
+                )
             }
 
             override fun onFailure(call: Call, e: IOException) {
-                if (continuation.isActive) {
-                    continuation.cancel(e)
-                }
+                continuation.resumeWithException(e)
             }
         })
         continuation.invokeOnCancellation { cancel() }

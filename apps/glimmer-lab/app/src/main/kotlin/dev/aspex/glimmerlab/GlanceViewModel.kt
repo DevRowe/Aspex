@@ -30,6 +30,12 @@ sealed interface ConfirmFlow {
         val item: AttentionItem,
         val action: HubAction,
         val intentId: String,
+        /**
+         * Set when a confirmed attempt failed ambiguously; the flow stays here
+         * with the same intentId so the retry replays through the Hub's intent
+         * ledger instead of re-running the action under a fresh id.
+         */
+        val failureNote: String? = null,
     ) : ConfirmFlow
 
     data class InFlight(val label: String) : ConfirmFlow
@@ -162,7 +168,16 @@ class GlanceViewModel(
                 ConfirmFlow.AwaitingConfirmation(item, action, intentId)
 
             is ActionOutcome.Failure ->
-                ConfirmFlow.Notice("${action.label} failed (${outcome.code})")
+                if (confirmed) {
+                    ConfirmFlow.AwaitingConfirmation(
+                        item = item,
+                        action = action,
+                        intentId = intentId,
+                        failureNote = "${action.label} failed (${outcome.code}) - retry?",
+                    )
+                } else {
+                    ConfirmFlow.Notice("${action.label} failed (${outcome.code})")
+                }
         }
         _uiState.update { it.copy(confirm = next) }
 
