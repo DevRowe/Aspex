@@ -46,9 +46,10 @@ class HubClient(
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
-        // SSE stream: the Hub comments `: ping` every 15s (apps/hub/src/http
-        // /sse.ts), so a read timeout well above that turns a silently dead
-        // connection into onFailure and lets the caller reconnect.
+        // SSE stream: the Hub sends a named `ping` event every 15s (apps/hub
+        // /src/http/sse.ts), so a read timeout well above that turns a
+        // silently dead connection into onFailure and lets the caller
+        // reconnect.
         .readTimeout(45, TimeUnit.SECONDS)
         .build()
 
@@ -150,8 +151,11 @@ class HubClient(
                         null -> ActionOutcome.Success(text)
                         else -> ActionOutcome.Failure(code, failure)
                     }
-                    // The confirmation gate is only recognizable by status
-                    // code + prose today; see the PR notes on Decision 1.
+                    // The gate's 409 is problem+json typed
+                    // `urn:aspex:problem:confirmation-required` with a
+                    // `resend` payload since Hub v1.1; this thin client keys
+                    // off the bare status code (unique on this route), and
+                    // parsing the problem type is the natural follow-up.
                     code == 409 -> ActionOutcome.NeedsConfirmation(text)
                     else -> ActionOutcome.Failure(code, text)
                 }

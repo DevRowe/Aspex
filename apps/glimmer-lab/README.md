@@ -71,6 +71,8 @@ To verify on the Windows host:
 
 ## Known gaps / protocol notes
 
-- The 409 confirmation gate is recognized by status code alone; the body is prose. See the protocol feedback in the PR that introduced this app (RFC 9457 `confirmation-required` problem type, per report `aspex-protocol-design-d1` Decision 1).
-- `POST /intents` answers a non-JSON `404 Not Found` when no orchestrator is configured; the client treats any non-200 as "status unavailable".
+- The machine-readable confirmation gate this prototype called for shipped in Hub v1.1 (ADR-0024) - the prototype validated the need: the 409 now carries an RFC 9457 problem+json body typed `urn:aspex:problem:confirmation-required` with a `resend` payload, per report `aspex-protocol-design-d1` Decision 1.
+  This client still keys off the bare status code for thinness (409 is unique on that route); parsing the problem type and re-POSTing the `resend` payload is the natural follow-up.
+- `POST /intents` errors are also problem+json since v1.1, but with no orchestrator configured the route is absent, so its 404 is the generic `Not Found` problem - still indistinguishable from a bad route; a typed "orchestrator not configured" problem remains open feedback.
+  The client treats any non-200 as "status unavailable".
 - ASR voice input (`androidx.xr.glimmer` voice indicator + Projected ASR) is stubbed by buttons; wiring it is cheap only once the emulator is in play.

@@ -176,13 +176,15 @@ class GlanceViewModel(
         _uiState.update { it.copy(confirm = ConfirmFlow.InFlight(action.label)) }
 
         val outcome = client.postAction(item.id, action.id, intentId, confirmed)
+        val stillTop = _uiState.value.top?.id == item.id
         val next = when (outcome) {
             is ActionOutcome.Success -> ConfirmFlow.Notice("${action.label}: sent")
             is ActionOutcome.NeedsConfirmation ->
-                ConfirmFlow.AwaitingConfirmation(item, action, intentId)
+                if (stillTop) ConfirmFlow.AwaitingConfirmation(item, action, intentId)
+                else ConfirmFlow.Idle
 
             is ActionOutcome.Failure ->
-                if (confirmed) {
+                if (confirmed && stillTop) {
                     ConfirmFlow.AwaitingConfirmation(
                         item = item,
                         action = action,
