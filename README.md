@@ -5,7 +5,7 @@ The goal is ambient supervision on the go: your agents work, their needs and res
 
 This is a north-star realignment (2026-07).
 The tested backend below - the Hub, the `@aspex/schema` wire contract, attention ranking, liveness, the HTTP/SSE protocol, and the voice loop - is real and carries forward.
-The desktop cockpit and Preview Deck it grew up inside are now legacy (see [Legacy surfaces](#legacy-surfaces)).
+The desktop cockpit it grew up inside is now legacy (see [Legacy surfaces](#legacy-surfaces)); the Preview Deck that sat beside it has been removed.
 The Hub-side half of the outbound direction channel - the orchestrator protocol core and the reference Giles adapter - is now built; the Giles-side consumer is a parallel build against the same design.
 
 ## The vision in one page
@@ -146,7 +146,7 @@ Run the desktop simulator with `bun run --cwd apps/hl2-lab dev`, type-check it w
 By default the Hub binds `127.0.0.1` and the browser CORS allowlist is localhost/Tauri-only, so it is same-machine unless you opt in.
 `hubBind`/`ASPEX_HUB_BIND` opens the bind address (for glasses on a private tailnet) and `corsOrigin`/`ASPEX_HUB_CORS_ORIGIN` allows one extra exact browser origin.
 Because the Hub can be made reachable beyond loopback, every HTTP and SSE endpoint requires a locally generated bearer token.
-When the Hub binds a specific interface, the bundled local CLI callers (`aspex hook-relay`, `aspex preview list`) dial that same address automatically.
+When the Hub binds a specific interface, the bundled local CLI caller (`aspex hook-relay`) dials that same address automatically.
 On first boot the Hub generates a token and stores it in `~/.aspex/config.json` under `auth.token`.
 You can also supply one through the `ASPEX_HUB_TOKEN` environment variable, which takes precedence and is never written to disk.
 When you supply `ASPEX_HUB_TOKEN`, make the same environment variable available
@@ -257,8 +257,9 @@ not own GitHub PR lifecycle attention.
 
 ## Legacy surfaces
 
-Two subsystems were built inside the original "desktop attention-triage cockpit"
-framing and are kept for reference during the pivot, not deleted.
+Subsystems built inside the original "desktop attention-triage cockpit"
+framing are kept for reference during the pivot, not deleted, unless noted
+otherwise below.
 New work should not build on them; the client future is the AR tracks above.
 
 - **Desktop cockpit (`apps/web`, `apps/desktop`).**
@@ -271,15 +272,12 @@ New work should not build on them; the client future is the AR tracks above.
   the Tauri `hub_token` command, browser `Authorization` headers, and SSE
   `?token=` stream URLs so the legacy path still works while deprecated.
 
-- **Preview Deck (`apps/hub/src/preview`).**
-  The Preview Deck (ADR-0014 through ADR-0017) boots disposable, origin-isolated
-  previews of agent output.
-  It is real, tested, opt-in code that sits beside the world-model and never
-  feeds it - a different product from ambient supervision.
-  It is documented in [docs/preview-deck.md](docs/preview-deck.md) and retained,
-  but it is out of the north-star path.
-  This README previously omitted it entirely; it is called out here so the
-  documented surface area matches the code.
+- **Preview Deck (removed).**
+  The Preview Deck (ADR-0014 through ADR-0017) booted disposable,
+  origin-isolated previews of agent output.
+  It sat beside the world-model and never fed it - a different product from
+  ambient supervision - and was removed on 2026-07-17.
+  The full implementation is recoverable from git history at commit `2e60875`.
 
 ## Project Notes
 

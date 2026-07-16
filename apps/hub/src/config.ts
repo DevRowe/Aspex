@@ -11,7 +11,7 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { isRecord } from "@aspex/schema";
-import type { PreviewSpec, Severity } from "@aspex/schema";
+import type { Severity } from "@aspex/schema";
 import type { LivenessConfig } from "./engine/liveness";
 
 export interface AspexConfig {
@@ -32,7 +32,6 @@ export interface AspexConfig {
   liveness?: Partial<LivenessConfig>;
   voice?: VoiceConfig;
   intent?: IntentConfig;
-  previews?: PreviewConfig;
   adapters?: AdaptersConfig;
   orchestrators?: OrchestratorsConfig;
   mock?: boolean;
@@ -67,18 +66,6 @@ export interface IntentConfig {
   mock?: boolean;
 }
 
-export interface PreviewConfig {
-  enabled: boolean;
-  engine: "docker" | "mock";
-  maxConcurrent: number;
-  limits: {
-    cpus: string;
-    memory: string;
-    idleTtlSec: number;
-  };
-  specs: PreviewSpec[];
-}
-
 export interface AdaptersConfig {
   codex?: { enabled: boolean };
   opencode?: { enabled: boolean; serverUrl: string; directory?: string };
@@ -88,14 +75,7 @@ export interface AdaptersConfig {
 type ConfigFile = Partial<
   Omit<
     AspexConfig,
-    | "auth"
-    | "github"
-    | "ntfy"
-    | "liveness"
-    | "voice"
-    | "intent"
-    | "previews"
-    | "adapters"
+    "auth" | "github" | "ntfy" | "liveness" | "voice" | "intent" | "adapters"
   >
 > & {
   auth?: Partial<AspexConfig["auth"]>;
@@ -107,9 +87,6 @@ type ConfigFile = Partial<
     tts?: Partial<VoiceConfig["tts"]>;
   };
   intent?: Partial<IntentConfig>;
-  previews?: Partial<Omit<PreviewConfig, "limits">> & {
-    limits?: Partial<PreviewConfig["limits"]>;
-  };
   adapters?: {
     codex?: Partial<NonNullable<AdaptersConfig["codex"]>>;
     opencode?: Partial<NonNullable<AdaptersConfig["opencode"]>>;
@@ -140,14 +117,6 @@ const DEFAULT_INTENT_CONFIG: IntentConfig = {
   elevateConfirm: true,
 };
 
-const DEFAULT_PREVIEW_CONFIG: PreviewConfig = {
-  enabled: false,
-  engine: "docker",
-  maxConcurrent: 3,
-  limits: { cpus: "1", memory: "512m", idleTtlSec: 600 },
-  specs: [],
-};
-
 const DEFAULT_ORCHESTRATORS_CONFIG: OrchestratorsConfig = {
   giles: { enabled: false, home: "~/giles" },
 };
@@ -166,7 +135,6 @@ export const DEFAULT_CONFIG: AspexConfig = {
   pollIntervalMs: 60_000,
   voice: DEFAULT_VOICE_CONFIG,
   intent: DEFAULT_INTENT_CONFIG,
-  previews: DEFAULT_PREVIEW_CONFIG,
   adapters: DEFAULT_ADAPTERS_CONFIG,
   orchestrators: DEFAULT_ORCHESTRATORS_CONFIG,
   liveness: {
@@ -312,7 +280,6 @@ function mergeConfig(base: AspexConfig, override: ConfigFile): AspexConfig {
     liveness: mergeOptionalObject(base.liveness, override.liveness),
     voice: mergeVoiceConfig(base.voice, override.voice),
     intent: mergeIntentConfig(base.intent, override.intent),
-    previews: mergePreviewConfig(base.previews, override.previews),
     adapters: mergeAdaptersConfig(base.adapters, override.adapters),
     orchestrators: mergeOrchestratorsConfig(
       base.orchestrators,
@@ -388,34 +355,6 @@ function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
           env.ASPEX_INTENT_MOCK,
           cfg.intent?.mock,
           "ASPEX_INTENT_MOCK",
-        )
-      : undefined;
-  const previewsEnabled =
-    env.ASPEX_PREVIEWS_ENABLED !== undefined
-      ? parseBoolean(
-          env.ASPEX_PREVIEWS_ENABLED,
-          cfg.previews?.enabled,
-          "ASPEX_PREVIEWS_ENABLED",
-        )
-      : undefined;
-  const previewsEngine =
-    env.ASPEX_PREVIEWS_ENGINE !== undefined
-      ? parsePreviewEngine(env.ASPEX_PREVIEWS_ENGINE)
-      : undefined;
-  const previewsMaxConcurrent =
-    env.ASPEX_PREVIEWS_MAX_CONCURRENT !== undefined
-      ? parseInteger(
-          env.ASPEX_PREVIEWS_MAX_CONCURRENT,
-          cfg.previews?.maxConcurrent,
-          "ASPEX_PREVIEWS_MAX_CONCURRENT",
-        )
-      : undefined;
-  const previewsIdleTtlSec =
-    env.ASPEX_PREVIEWS_IDLE_TTL_SEC !== undefined
-      ? parseInteger(
-          env.ASPEX_PREVIEWS_IDLE_TTL_SEC,
-          cfg.previews?.limits.idleTtlSec,
-          "ASPEX_PREVIEWS_IDLE_TTL_SEC",
         )
       : undefined;
   const codexEnabled =
@@ -548,28 +487,6 @@ function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
         ...(intentMock !== undefined ? { mock: intentMock } : {}),
       }
     : cfg.intent;
-  const hasPreviewEnv =
-    previewsEnabled !== undefined ||
-    previewsEngine !== undefined ||
-    previewsMaxConcurrent !== undefined ||
-    previewsIdleTtlSec !== undefined;
-  const previewBase = cfg.previews ?? DEFAULT_PREVIEW_CONFIG;
-  const previews = hasPreviewEnv
-    ? {
-        ...previewBase,
-        ...(previewsEnabled !== undefined ? { enabled: previewsEnabled } : {}),
-        ...(previewsEngine !== undefined ? { engine: previewsEngine } : {}),
-        ...(previewsMaxConcurrent !== undefined
-          ? { maxConcurrent: previewsMaxConcurrent }
-          : {}),
-        limits: {
-          ...previewBase.limits,
-          ...(previewsIdleTtlSec !== undefined
-            ? { idleTtlSec: previewsIdleTtlSec }
-            : {}),
-        },
-      }
-    : cfg.previews;
   const hasAdaptersEnv =
     codexEnabled !== undefined ||
     opencodeEnabled !== undefined ||
@@ -654,7 +571,6 @@ function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
     mock: parseBoolean(env.ASPEX_MOCK, cfg.mock, "ASPEX_MOCK"),
     voice,
     intent,
-    previews,
     adapters,
     orchestrators,
     liveness: {
@@ -696,7 +612,6 @@ function normalizeConfig(cfg: AspexConfig): AspexConfig {
     dbPath: expandHome(cfg.dbPath),
     voice: normalizeVoiceConfig(cfg.voice, cfg.mock),
     intent: normalizeIntentConfig(cfg.intent, cfg.mock),
-    previews: normalizePreviewConfig(cfg.previews),
     adapters: normalizeAdaptersConfig(cfg.adapters),
     orchestrators: normalizeOrchestratorsConfig(cfg.orchestrators),
   };
@@ -800,7 +715,7 @@ function normalizeCorsOrigin(origin: unknown): string | undefined {
   }
 }
 
-// The address local CLI clients (hook relay, `aspex preview list`) dial to
+// The address local CLI clients (hook relay) dial to
 // reach the running Hub. A wildcard bind still serves loopback; a specific
 // bind serves only that address.
 export function hubClientHost(cfg: Pick<AspexConfig, "hubBind">): string {
@@ -955,62 +870,6 @@ function normalizeIntentConfig(
     ...withMock,
     endpoints,
     model: withMock.model.trim(),
-  };
-}
-
-function normalizePreviewConfig(
-  previews: PreviewConfig | undefined,
-): PreviewConfig {
-  const normalized = mergePreviewConfig(DEFAULT_CONFIG.previews, previews);
-
-  if (normalized === undefined) {
-    throw new Error("previews config defaults are missing");
-  }
-
-  if (normalized.engine !== "docker" && normalized.engine !== "mock") {
-    throw new Error("previews.engine must be docker or mock");
-  }
-
-  if (typeof normalized.enabled !== "boolean") {
-    throw new Error("previews.enabled must be a boolean");
-  }
-
-  if (
-    !Number.isInteger(normalized.maxConcurrent) ||
-    normalized.maxConcurrent <= 0
-  ) {
-    throw new Error("previews.maxConcurrent must be a positive integer");
-  }
-
-  if (
-    typeof normalized.limits.cpus !== "string" ||
-    normalized.limits.cpus.trim() === ""
-  ) {
-    throw new Error("previews.limits.cpus must be a non-empty string");
-  }
-
-  if (
-    typeof normalized.limits.memory !== "string" ||
-    normalized.limits.memory.trim() === ""
-  ) {
-    throw new Error("previews.limits.memory must be a non-empty string");
-  }
-
-  if (
-    !Number.isInteger(normalized.limits.idleTtlSec) ||
-    normalized.limits.idleTtlSec <= 0
-  ) {
-    throw new Error("previews.limits.idleTtlSec must be a positive integer");
-  }
-
-  if (!Array.isArray(normalized.specs)) {
-    throw new Error("previews.specs must be an array");
-  }
-
-  return {
-    ...normalized,
-    limits: { ...normalized.limits },
-    specs: [...normalized.specs],
   };
 }
 
@@ -1172,14 +1031,6 @@ function parseNtfySeverity(raw: string): Extract<Severity, "medium" | "high"> {
   throw new Error("ASPEX_NTFY_MIN_SEVERITY must be medium or high");
 }
 
-function parsePreviewEngine(raw: string): PreviewConfig["engine"] {
-  if (raw === "docker" || raw === "mock") {
-    return raw;
-  }
-
-  throw new Error("ASPEX_PREVIEWS_ENGINE must be docker or mock");
-}
-
 function parseCsv(raw: string | undefined): string[] | undefined {
   if (raw === undefined) {
     return undefined;
@@ -1270,25 +1121,6 @@ function mergeIntentConfig(
     endpoints:
       override.endpoints ?? base?.endpoints ?? DEFAULT_INTENT_CONFIG.endpoints,
   } as IntentConfig;
-}
-
-function mergePreviewConfig(
-  base: PreviewConfig | undefined,
-  override: ConfigFile["previews"] | undefined,
-): PreviewConfig | undefined {
-  if (override === undefined) {
-    return base;
-  }
-
-  return {
-    ...(base ?? DEFAULT_PREVIEW_CONFIG),
-    ...override,
-    limits: {
-      ...(base?.limits ?? DEFAULT_PREVIEW_CONFIG.limits),
-      ...override.limits,
-    },
-    specs: override.specs ?? base?.specs ?? DEFAULT_PREVIEW_CONFIG.specs,
-  } as PreviewConfig;
 }
 
 function mergeAdaptersConfig(

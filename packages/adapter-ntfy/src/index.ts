@@ -11,6 +11,10 @@ export interface NtfyBus {
     event: "world:changed",
     fn: (change: { upserted: AttentionItem[]; removed: string[] }) => void,
   ): void;
+  off(
+    event: "world:changed",
+    fn: (change: { upserted: AttentionItem[]; removed: string[] }) => void,
+  ): void;
 }
 
 export interface NtfyNotifierOptions {
@@ -53,6 +57,12 @@ export class NtfyNotifier {
   private notifiable = new Map<string, boolean>();
   private fetchImpl: FetchFn;
   private log: (message: string) => void;
+  private bus: NtfyBus;
+  private onWorldChanged = ({ upserted }: { upserted: AttentionItem[] }) => {
+    for (const item of upserted) {
+      void this.maybeNotify(item);
+    }
+  };
 
   constructor(
     private cfg: NtfyConfig,
@@ -61,12 +71,13 @@ export class NtfyNotifier {
   ) {
     this.fetchImpl = options.fetch ?? fetch;
     this.log = options.log ?? console.warn;
+    this.bus = bus;
 
-    bus.on("world:changed", ({ upserted }) => {
-      for (const item of upserted) {
-        void this.maybeNotify(item);
-      }
-    });
+    bus.on("world:changed", this.onWorldChanged);
+  }
+
+  detach(): void {
+    this.bus.off("world:changed", this.onWorldChanged);
   }
 
   async maybeNotify(item: AttentionItem): Promise<void> {

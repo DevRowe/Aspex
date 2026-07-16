@@ -48,7 +48,7 @@ bun run --cwd apps/desktop dev
 - Keep Claude Code read-only in Phase 0 per ADR-0004.
 - Do not add AGPL/GPL dependencies to the shipped core.
 
-Future Labs work such as voice, spatial UI, preview isolation, and delegation
+Future Labs work such as voice, spatial UI, and delegation
 belongs in later-phase planning until it has explicit task cards.
 
 ## Build Artifacts

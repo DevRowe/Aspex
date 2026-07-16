@@ -1,4 +1,3 @@
-import type { Preview } from "@aspex/schema";
 import { useStore } from "../store";
 import type { ActionResult } from "../types";
 import type { RankedState } from "../types";
@@ -14,23 +13,14 @@ interface TauriGlobals {
   };
 }
 
-export interface HubStreamOptions {
-  onPreview?: (preview: Preview) => void;
-}
-
 export interface HubClientConfig {
-  previews?: {
-    enabled?: boolean;
-  };
   intentEnabled?: boolean;
   intent?: {
     enabled?: boolean;
   };
 }
 
-export async function connect(
-  options: HubStreamOptions = {},
-): Promise<EventSource> {
+export async function connect(): Promise<EventSource> {
   const hub = await getHubUrl();
   const token = await getHubToken();
   const streamUrl = new URL(`${hub}/stream`);
@@ -47,12 +37,6 @@ export async function connect(
     ) as RankedState;
     useStore.getState().setState(state);
   });
-  stream.addEventListener("preview", (event) => {
-    options.onPreview?.(
-      JSON.parse((event as MessageEvent<string>).data) as Preview,
-    );
-  });
-
   stream.onopen = () => useStore.getState().setConnected(true);
   stream.onerror = () => useStore.getState().setConnected(false);
 

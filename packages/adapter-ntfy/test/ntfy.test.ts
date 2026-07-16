@@ -65,6 +65,22 @@ describe("ntfy notifier", () => {
     expect(calls).toHaveLength(0);
   });
 
+  test("detach unsubscribes from the bus", async () => {
+    const calls: FetchCall[] = [];
+    const bus = new Bus();
+    const notifier = new NtfyNotifier(
+      { server: "https://ntfy.example", topic: "aspex" },
+      bus,
+      { fetch: fetchMock(calls) },
+    );
+
+    notifier.detach();
+    bus.emit("world:changed", { upserted: [item()], removed: [] });
+    await tick();
+
+    expect(calls).toHaveLength(0);
+  });
+
   test("ntfy HTTP failure is logged and swallowed", async () => {
     const logs: string[] = [];
     const bus = new Bus();
