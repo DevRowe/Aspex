@@ -209,20 +209,33 @@ async function mapWithConcurrency<T, R>(
 ): Promise<R[]> {
   const results = new Array<R>(items.length);
   let next = 0;
+  let failed = false;
+  let firstError: unknown;
 
   const workers = Array.from(
     { length: Math.min(limit, items.length) },
     async () => {
-      while (next < items.length) {
+      while (!failed && next < items.length) {
         const index = next;
         next += 1;
         const item = items[index] as T;
-        results[index] = await fn(item);
+        try {
+          results[index] = await fn(item);
+        } catch (error) {
+          if (!failed) {
+            failed = true;
+            firstError = error;
+          }
+        }
       }
     },
   );
 
   await Promise.all(workers);
+
+  if (failed) {
+    throw firstError;
+  }
 
   return results;
 }

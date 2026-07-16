@@ -555,7 +555,7 @@ export class VoiceGateway {
 }
 
 function withConfirmed(payload: unknown): unknown {
-  if (isRecord(payload) && !Array.isArray(payload)) {
+  if (isRecord(payload)) {
     return { ...payload, confirmed: true };
   }
 
