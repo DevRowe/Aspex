@@ -44,9 +44,11 @@ Examples:
 Helpers in `packages/schema/src/ids.ts` create common ids:
 
 ```ts
-githubPrId(repo, number);
+githubItemId({ owner, repo, number });
 claudeSessionId(sessionId);
 codexSessionId(sessionId);
+openCodeSessionId(sessionId);
+cursorAgentId(agentId);
 webhookId(key);
 orchestratorItemId(orchId, taskId);
 parseItemId(id);
