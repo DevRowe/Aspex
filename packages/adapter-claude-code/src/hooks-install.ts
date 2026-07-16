@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { isRecord } from "@aspex/schema";
 import { CLAUDE_CODE_HOOK_EVENTS, type ClaudeCodeHookEvent } from "./index";
 
 const ASPEX_COMMAND_PREFIX = "aspex hook-relay --event";
@@ -190,8 +191,4 @@ function isEmptyHookEntry(entry: unknown): boolean {
 
 function cloneRecord(record: Record<string, unknown>): Record<string, unknown> {
   return { ...record };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

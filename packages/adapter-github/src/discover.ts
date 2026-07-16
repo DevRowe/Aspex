@@ -31,6 +31,8 @@ export interface GithubRestClient {
         owner: string;
         repo: string;
         pull_number: number;
+        per_page?: number;
+        page?: number;
       }): Promise<{ data: GithubReviewResponse[] }>;
     };
     checks: {
@@ -79,6 +81,7 @@ export interface GithubPullResponse {
 export interface GithubReviewResponse {
   state?: string | null;
   submitted_at?: string | null;
+  user?: { login?: string | null } | null;
 }
 
 export interface GithubCheckRunResponse {
@@ -156,47 +159,72 @@ export async function discoverGithubPullRequests(
     }
   }
 
-  const rawPullRequests: GithubRawPullRequest[] = [];
+  return mapWithConcurrency(
+    [...records.values()],
+    DISCOVERY_CONCURRENCY,
+    async (record) => {
+      const pullResponse = await client.rest.pulls.get({
+        owner: record.owner,
+        repo: record.repo,
+        pull_number: record.number,
+      });
+      const pr = pullResponse.data;
+      const matches = [...record.matches];
+      const shouldFetchChecks =
+        matches.includes("author") || matches.includes("allowlist");
+      const [checks, approved] = await Promise.all([
+        shouldFetchChecks
+          ? fetchChecks(client, record.owner, record.repo, pr.head.sha, options)
+          : emptyChecks(),
+        shouldFetchChecks
+          ? fetchApproved(client, record.owner, record.repo, record.number)
+          : false,
+      ]);
 
-  for (const record of records.values()) {
-    const pullResponse = await client.rest.pulls.get({
-      owner: record.owner,
-      repo: record.repo,
-      pull_number: record.number,
-    });
-    const pr = pullResponse.data;
-    const matches = [...record.matches];
-    const shouldFetchChecks =
-      matches.includes("author") || matches.includes("allowlist");
-    const checks = shouldFetchChecks
-      ? await fetchChecks(
-          client,
-          record.owner,
-          record.repo,
-          pr.head.sha,
-          options,
-        )
-      : emptyChecks();
-    const approved = shouldFetchChecks
-      ? await fetchApproved(client, record.owner, record.repo, record.number)
-      : false;
+      return {
+        owner: pr.base.repo.owner.login,
+        repo: pr.base.repo.name,
+        number: pr.number,
+        title: pr.title,
+        url: pr.html_url,
+        author: pr.user?.login ?? undefined,
+        headSha: pr.head.sha,
+        mergeable: pr.mergeable,
+        matches,
+        checks,
+        approved,
+      };
+    },
+  );
+}
 
-    rawPullRequests.push({
-      owner: pr.base.repo.owner.login,
-      repo: pr.base.repo.name,
-      number: pr.number,
-      title: pr.title,
-      url: pr.html_url,
-      author: pr.user?.login ?? undefined,
-      headSha: pr.head.sha,
-      mergeable: pr.mergeable,
-      matches,
-      checks,
-      approved,
-    });
-  }
+// Modest fan-out per poll cycle: enough to collapse the serial N+1 latency,
+// small enough to stay well inside GitHub's secondary rate limits.
+const DISCOVERY_CONCURRENCY = 5;
 
-  return rawPullRequests;
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+
+  const workers = Array.from(
+    { length: Math.min(limit, items.length) },
+    async () => {
+      while (next < items.length) {
+        const index = next;
+        next += 1;
+        const item = items[index] as T;
+        results[index] = await fn(item);
+      }
+    },
+  );
+
+  await Promise.all(workers);
+
+  return results;
 }
 
 export function githubSearchQueries(
@@ -312,19 +340,77 @@ async function fetchApproved(
   repo: string,
   number: number,
 ): Promise<boolean> {
-  const response = await client.rest.pulls.listReviews({
-    owner,
-    repo,
-    pull_number: number,
-  });
-  const latestState = response.data
-    .filter((review) => review.state !== undefined && review.state !== null)
-    .toSorted((a, b) =>
-      (a.submitted_at ?? "").localeCompare(b.submitted_at ?? ""),
-    )
-    .at(-1)?.state;
+  const reviews = await fetchAllReviews(client, owner, repo, number);
 
-  return latestState === "APPROVED";
+  return isApprovedByReviews(reviews);
+}
+
+const REVIEWS_PER_PAGE = 100;
+
+async function fetchAllReviews(
+  client: GithubRestClient,
+  owner: string,
+  repo: string,
+  number: number,
+): Promise<GithubReviewResponse[]> {
+  const reviews: GithubReviewResponse[] = [];
+
+  for (let page = 1; ; page += 1) {
+    const response = await client.rest.pulls.listReviews({
+      owner,
+      repo,
+      pull_number: number,
+      per_page: REVIEWS_PER_PAGE,
+      page,
+    });
+
+    reviews.push(...response.data);
+
+    if (response.data.length < REVIEWS_PER_PAGE) {
+      return reviews;
+    }
+  }
+}
+
+// GitHub approval is per reviewer: a reviewer's latest APPROVED or
+// CHANGES_REQUESTED review is their standing verdict (a later COMMENTED
+// review does not supersede it, and a dismissed review comes back from the
+// API with state DISMISSED, clearing the verdict). The PR counts as approved
+// when at least one reviewer's standing verdict is APPROVED and none is
+// CHANGES_REQUESTED.
+export function isApprovedByReviews(reviews: GithubReviewResponse[]): boolean {
+  const verdictByReviewer = new Map<string, string>();
+  const ordered = reviews.toSorted((a, b) =>
+    (a.submitted_at ?? "").localeCompare(b.submitted_at ?? ""),
+  );
+
+  for (const review of ordered) {
+    const reviewer = review.user?.login;
+    const state = review.state;
+
+    if (
+      reviewer === undefined ||
+      reviewer === null ||
+      state === undefined ||
+      state === null
+    ) {
+      continue;
+    }
+
+    if (
+      state === "APPROVED" ||
+      state === "CHANGES_REQUESTED" ||
+      state === "DISMISSED"
+    ) {
+      verdictByReviewer.set(reviewer, state);
+    }
+  }
+
+  const verdicts = [...verdictByReviewer.values()];
+
+  return (
+    verdicts.includes("APPROVED") && !verdicts.includes("CHANGES_REQUESTED")
+  );
 }
 
 function summarizeChecks(

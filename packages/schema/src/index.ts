@@ -1,4 +1,5 @@
 export * from "./adapter";
+export * from "./guards";
 export * from "./ids";
 export * from "./types";
 export * from "./validate";

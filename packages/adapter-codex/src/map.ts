@@ -1,5 +1,10 @@
 import type { Signal } from "@aspex/schema";
-import { codexSessionId } from "@aspex/schema";
+import {
+  codexSessionId,
+  isRecord,
+  projectFromCwd,
+  stringField,
+} from "@aspex/schema";
 
 const CODEX_SOURCE = "codex";
 
@@ -65,17 +70,4 @@ export function mapCodexNotifyToSignal(payload: unknown): CodexSignal | null {
         : [{ label: "Codex session", text: deepLink }],
     heartbeat: true,
   };
-}
-
-function isRecord(value: unknown): value is CodexNotifyPayload {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function stringField(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function projectFromCwd(cwd: string): string {
-  const segments = cwd.split(/[\\/]+/).filter((segment) => segment.length > 0);
-  return segments.at(-1) ?? "";
 }

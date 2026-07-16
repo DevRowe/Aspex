@@ -14,6 +14,7 @@ import {
   type VoiceResult,
   type VoiceSession,
   isIntentResult,
+  isRecord,
 } from "@aspex/schema";
 import { parse } from "./grammar";
 import type { IntentService } from "./intentService";
@@ -608,9 +609,6 @@ function withFreeformIntentId(
       return intent;
   }
 }
-
-const isRecord = (x: unknown): x is Record<string, unknown> =>
-  typeof x === "object" && x !== null;
 
 function withFreeformReadback(
   effect: Effect,

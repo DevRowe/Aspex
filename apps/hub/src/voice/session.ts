@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { isMergeWord } from "@aspex/schema";
+import { isMergeWord, isRecord } from "@aspex/schema";
 import type {
   ClientDirective,
   Intent,
@@ -383,9 +383,6 @@ function confirmationPayload(
 
   return Object.keys(payload).length === 0 ? undefined : payload;
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 function fallbackIntentId(
   now: number,

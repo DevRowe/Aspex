@@ -5,6 +5,7 @@ import type {
   IntentResult,
   ItemId,
 } from "@aspex/schema";
+import { isRecord } from "@aspex/schema";
 import { buildIntentSchema } from "./intentSchema";
 
 export interface IntentService {
@@ -236,10 +237,6 @@ function liveCandidateIds(req: IntentRequest): Set<ItemId> {
       .map((candidate) => candidate.itemId)
       .filter((itemId) => liveIds.has(itemId)),
   );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function fetchWithTimeout(

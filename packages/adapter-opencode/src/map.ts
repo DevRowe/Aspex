@@ -1,4 +1,10 @@
 import type { Signal } from "@aspex/schema";
+import {
+  isRecord,
+  openCodeSessionId,
+  projectFromCwd,
+  stringAt,
+} from "@aspex/schema";
 
 export const OPENCODE_SOURCE = "opencode" as const;
 
@@ -124,10 +130,6 @@ function baseSignal(
   };
 }
 
-function openCodeSessionId(sessionId: string): string {
-  return `${OPENCODE_SOURCE}:session:${sessionId}`;
-}
-
 function eventName(event: Record<string, unknown>): string {
   return (
     stringAt(event, ["event", "type", "name", "kind"]) ?? ""
@@ -250,33 +252,7 @@ function projectFromPath(value: string | undefined): string {
     return OPENCODE_SOURCE;
   }
 
-  const segments = value
-    .split(/[\\/]+/)
-    .filter((segment) => segment.length > 0);
+  const project = projectFromCwd(value);
 
-  return segments.at(-1) ?? OPENCODE_SOURCE;
-}
-
-function stringAt(
-  value: Record<string, unknown>,
-  paths: readonly string[],
-): string | undefined {
-  for (const path of paths) {
-    const found = path
-      .split(".")
-      .reduce<unknown>(
-        (current, key) => (isRecord(current) ? current[key] : undefined),
-        value,
-      );
-
-    if (typeof found === "string" && found.trim().length > 0) {
-      return found.trim();
-    }
-  }
-
-  return undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return project.length > 0 ? project : OPENCODE_SOURCE;
 }

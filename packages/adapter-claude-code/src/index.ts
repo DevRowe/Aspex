@@ -5,7 +5,7 @@ import type {
   AdapterContext,
   Signal,
 } from "@aspex/schema";
-import { claudeSessionId } from "@aspex/schema";
+import { claudeSessionId, projectFromCwd, stringField } from "@aspex/schema";
 
 export const CLAUDE_CODE_SOURCE = "claude-code" as const;
 export const CLAUDE_CODE_HOOK_EVENTS = [
@@ -132,20 +132,6 @@ function evidenceFor(payload: ClaudeHookPayload): ClaudeCodeSignal["evidence"] {
   return transcriptPath === undefined
     ? []
     : [{ label: "Transcript", text: transcriptPath }];
-}
-
-function stringField(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-// Claude Code may report a Windows (`D:\a\b`) or POSIX (`/a/b`) cwd regardless of
-// the OS the Hub runs on, so derive the project label by splitting on both
-// separators rather than relying on the platform-specific node:path basename
-// (which only treats `\` as a separator on Windows, mis-deriving a Windows path
-// to the whole string on a Linux host).
-function projectFromCwd(cwd: string): string {
-  const segments = cwd.split(/[\\/]+/).filter((segment) => segment.length > 0);
-  return segments.at(-1) ?? "";
 }
 
 export * from "./hooks-install";

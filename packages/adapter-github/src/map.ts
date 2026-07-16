@@ -1,4 +1,5 @@
 import type { Action, Reason, Signal, State } from "@aspex/schema";
+import { githubItemId } from "@aspex/schema";
 
 export type GithubPrMatch =
   | "review_requested"
@@ -70,12 +71,6 @@ const MERGE_ACTION: Action = {
   risk: "dangerous",
   requiresConfirmation: true,
 };
-
-export function githubItemId(
-  pr: Pick<GithubRawPullRequest, "owner" | "repo" | "number">,
-): string {
-  return `github:pr:${pr.owner}/${pr.repo}#${pr.number}`;
-}
 
 export function mapGithubPullRequest(
   pr: GithubRawPullRequest,

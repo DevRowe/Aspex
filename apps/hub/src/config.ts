@@ -10,6 +10,7 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { isRecord } from "@aspex/schema";
 import type { PreviewSpec, Severity } from "@aspex/schema";
 import type { LivenessConfig } from "./engine/liveness";
 
@@ -1371,8 +1372,4 @@ function voiceContractUrl(
   } catch {
     throw new Error(`${field} must contain valid URLs`);
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

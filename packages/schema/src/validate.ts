@@ -1,3 +1,4 @@
+import { isRecord } from "./guards";
 import type { Signal, Source, State } from "./types";
 
 const SOURCES = [
@@ -19,9 +20,6 @@ const STATES = [
   "done",
   "error",
 ] as const satisfies readonly State[];
-
-const isRecord = (x: unknown): x is Record<string, unknown> =>
-  typeof x === "object" && x !== null;
 
 const includesString = <T extends string>(
   values: readonly T[],

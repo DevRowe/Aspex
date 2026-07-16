@@ -1,9 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { claudeSessionId, githubPrId, parseItemId, webhookId } from "../src";
+import {
+  claudeSessionId,
+  cursorAgentId,
+  githubItemId,
+  openCodeSessionId,
+  parseItemId,
+  webhookId,
+} from "../src";
 
 describe("Item ids", () => {
   test("builds stable source-derived ids", () => {
-    expect(githubPrId("o/r", 42)).toBe("github:pr:o/r#42");
+    expect(githubItemId({ owner: "o", repo: "r", number: 42 })).toBe(
+      "github:pr:o/r#42",
+    );
+    expect(cursorAgentId("agent-9")).toBe("cursor:agent:agent-9");
+    expect(openCodeSessionId("sess-7")).toBe("opencode:session:sess-7");
     expect(claudeSessionId("session-123")).toBe(
       "claude-code:session:session-123",
     );
@@ -11,7 +22,7 @@ describe("Item ids", () => {
   });
 
   test("parses github PR ids", () => {
-    const id = githubPrId("o/r", 42);
+    const id = githubItemId({ owner: "o", repo: "r", number: 42 });
 
     expect(parseItemId(id)).toEqual({
       source: "github",

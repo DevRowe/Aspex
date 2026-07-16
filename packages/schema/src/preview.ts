@@ -1,3 +1,4 @@
+import { isRecord } from "./guards";
 import type { ItemId } from "./index";
 
 export type PreviewTrust = "trusted" | "untrusted";
@@ -31,9 +32,6 @@ export interface Preview {
 
 const PREVIEW_TRUSTS = ["trusted", "untrusted"] as const;
 const PREVIEW_ENGINES = ["docker", "compose", "mock"] as const;
-
-const isRecord = (x: unknown): x is Record<string, unknown> =>
-  typeof x === "object" && x !== null && !Array.isArray(x);
 
 const includesString = <T extends string>(
   values: readonly T[],
