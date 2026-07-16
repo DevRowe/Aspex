@@ -86,7 +86,7 @@ export class AdapterRegistry {
   actionMeta(
     itemId: string,
     actionId: string,
-  ): { requiresConfirmation: boolean } | null {
+  ): { requiresConfirmation: boolean; label: string } | null {
     const adapter = this.adapterForItem(itemId);
 
     if (adapter === null) {
@@ -96,7 +96,10 @@ export class AdapterRegistry {
     const action = adapter.listActions(itemId).find((a) => a.id === actionId);
 
     return action
-      ? { requiresConfirmation: action.requiresConfirmation }
+      ? {
+          requiresConfirmation: action.requiresConfirmation,
+          label: action.label,
+        }
       : null;
   }
 

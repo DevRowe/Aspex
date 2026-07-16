@@ -17,6 +17,7 @@ import {
   assertSignal,
   isValidIntentId,
 } from "@aspex/schema";
+import type { Context } from "hono";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { Bus } from "../bus";
@@ -24,13 +25,30 @@ import { rank } from "../engine/attention";
 import type { VoiceGateway } from "../voice/gateway";
 import type { WorldModel } from "../world/worldModel";
 import { hubAuth } from "./auth";
-import { IntentLedger, type LedgerEntry } from "./intentLedger";
 import {
-  createSharedFrameSource,
-  createStateStream,
-  encodeSseEvent,
-} from "./sse";
+  IntentLedger,
+  type LedgerEntry,
+  type LedgerResult,
+  requestFingerprint,
+} from "./intentLedger";
+import {
+  PROBLEM_TYPES,
+  isProblemBody,
+  problem,
+  problemBody,
+  problemResponse,
+} from "./problems";
+import { createSseBroadcaster, createStateStream } from "./sse";
 import { registerVoiceRoutes } from "./voice";
+
+// Wire-protocol version advertised in GET /state (protocol v1.1, B7): the
+// versioning slot for additive-only evolution; there is no /v1 path prefix.
+// Clients must ignore unknown fields and unknown SSE event types.
+export const HUB_API_VERSION = "1.1";
+
+// Marks a response that was answered from the idempotency ledger (a recorded
+// replay or a joined in-flight request) instead of executing again.
+export const IDEMPOTENCY_REPLAYED_HEADER = "Idempotency-Replayed";
 
 export interface ServerDeps {
   worldModel: WorldModel;
@@ -51,7 +69,7 @@ export interface ServerDeps {
   actionMeta: (
     itemId: string,
     actionId: string,
-  ) => { requiresConfirmation: boolean } | null;
+  ) => { requiresConfirmation: boolean; label?: string } | null;
   // Referent-less direction verbs (design 2.4): dispatch new work and
   // status-query, delivered to the orchestrator registry. When omitted the
   // POST /intents route is not registered.
@@ -94,9 +112,11 @@ export function buildApp(deps: ServerDeps): Hono {
       allowHeaders: [
         "Authorization",
         "Content-Type",
+        "Idempotency-Key",
         "X-Aspex-Voice-Session",
         "X-Aspex-Voice-Generation",
       ],
+      exposeHeaders: [IDEMPOTENCY_REPLAYED_HEADER],
     }),
   );
 
@@ -125,21 +145,21 @@ export function buildApp(deps: ServerDeps): Hono {
 
   app.get("/state", (c) => c.json(stateSnapshot(deps)));
 
-  // One snapshot + one encoded frame per world:changed event, shared by every
-  // connected /stream client instead of each recomputing the full ranked
-  // snapshot per event.
-  const subscribeStateFrames = createSharedFrameSource({
-    encode: () => encodeSseEvent("state", stateSnapshot(deps)),
-    attach: (notify) => {
-      deps.bus.on("world:changed", notify);
-      return () => deps.bus.off("world:changed", notify);
-    },
-  });
+  // One broadcaster per app: each world event is ranked and encoded exactly
+  // once for every connected /stream client, gets a monotonic id, and lands
+  // in the bounded replay ring. The bus subscription is permanent (not
+  // attached per client) because Last-Event-ID resume only works if events
+  // that fired while no client was connected are still in the ring.
+  const broadcaster = createSseBroadcaster();
+  deps.bus.on("world:changed", () =>
+    broadcaster.publish("state", stateSnapshot(deps)),
+  );
 
   app.get("/stream", (c) => {
     const stream = createStateStream({
       snapshot: () => stateSnapshot(deps),
-      subscribe: subscribeStateFrames,
+      broadcaster,
+      lastEventId: parseLastEventId(c.req.header("last-event-id")),
     });
 
     return c.body(stream, 200, {
@@ -173,7 +193,11 @@ export function buildApp(deps: ServerDeps): Hono {
 
       return c.json({ accepted: true }, 202);
     } catch (error) {
-      return c.json({ message: validationMessage(error) }, 400);
+      return problem(c, {
+        status: 400,
+        title: "Invalid Signal",
+        detail: validationMessage(error),
+      });
     }
   });
 
@@ -186,35 +210,62 @@ export function buildApp(deps: ServerDeps): Hono {
     try {
       body = await readOptionalJson(c.req.raw);
     } catch (error) {
-      return c.json({ message: validationMessage(error) }, 400);
+      return problem(c, {
+        status: 400,
+        title: "Invalid request body",
+        detail: validationMessage(error),
+      });
     }
 
-    // Optional idempotency key (design 2.6): a retried consequential action
-    // returns the recorded ack instead of running twice.
-    const intentId = body.intentId;
+    // Optional idempotency key (design 2.6 + IETF Idempotency-Key draft): a
+    // retried consequential action returns the recorded ack instead of
+    // running twice. The key arrives as the domain `intentId` in the body,
+    // the `Idempotency-Key` header, or both - and both must agree.
+    const keyOutcome = resolveIdempotencyKey(c, body.intentId);
 
-    if (intentId !== undefined && !isValidIntentId(intentId)) {
-      return c.json({ message: "Invalid intentId" }, 400);
+    if ("response" in keyOutcome) {
+      return keyOutcome.response;
     }
+
+    const intentId = keyOutcome.intentId;
 
     if (
       intentId !== undefined &&
       body.payload !== undefined &&
       !isRecord(body.payload)
     ) {
-      return c.json(
-        { message: "payload must be an object when intentId is set" },
-        400,
-      );
+      return problem(c, {
+        status: 400,
+        title: "Invalid request body",
+        detail: "payload must be an object when intentId is set",
+      });
     }
 
     const runAction = async (): Promise<LedgerEntry> => {
       const meta = deps.actionMeta(itemId, actionId);
 
       if (meta?.requiresConfirmation && body.confirmed !== true) {
+        // Machine-readable bridge for the kept 409 gate: the client restates
+        // the summary to the user and, on approval, re-POSTs `resend` to the
+        // same URL (the payload it must send back, confirmed).
         return {
           status: 409,
-          body: { message: "Action requires confirmation" },
+          body: problemBody({
+            status: 409,
+            type: PROBLEM_TYPES.confirmationRequired,
+            title: "Action requires confirmation",
+            detail: `Action requires confirmation: ${confirmationSummary(meta.label ?? actionId, itemId)}`,
+            extensions: {
+              itemId,
+              actionId,
+              summary: confirmationSummary(meta.label ?? actionId, itemId),
+              resend: {
+                ...(isRecord(body.payload) ? { payload: body.payload } : {}),
+                ...(intentId === undefined ? {} : { intentId }),
+                confirmed: true,
+              },
+            },
+          }),
         };
       }
 
@@ -229,18 +280,24 @@ export function buildApp(deps: ServerDeps): Hono {
     };
 
     if (intentId === undefined) {
-      const { status, body: responseBody } = await runAction();
-      return c.json(responseBody, status as 200);
+      return respondLedgerEntry(c, await runAction(), false);
     }
 
-    const outcome = await ledger.execute(intentId, async () => {
+    const fingerprint = requestFingerprint({
+      kind: "action",
+      itemId,
+      actionId,
+      confirmed: body.confirmed === true,
+      payload: body.payload ?? null,
+    });
+    const outcome = await ledger.execute(intentId, fingerprint, async () => {
       const entry = await runAction();
       const dispatched =
         entry.status === 200 && isRecord(entry.body) && entry.body.ok === true;
       return { entry, record: dispatched };
     });
 
-    return c.json(outcome.body, outcome.status as 200);
+    return respondLedgerResult(c, outcome, intentId);
   });
 
   if (deps.intents !== undefined) {
@@ -265,36 +322,204 @@ function registerIntentsRoute(
       assertDirectionIntent(body);
       intent = body;
     } catch (error) {
-      return c.json({ message: validationMessage(error) }, 400);
+      return problem(c, {
+        status: 400,
+        title: "Invalid DirectionIntent",
+        detail: validationMessage(error),
+      });
+    }
+
+    // The body intentId is the domain id (it names the orchestrator inbox
+    // file); an Idempotency-Key header is accepted but must agree with it.
+    const keyOutcome = resolveIdempotencyKey(c, intent.intentId);
+
+    if ("response" in keyOutcome) {
+      return keyOutcome.response;
     }
 
     if (intent.verb === "status_query") {
       const report = await intents.query(intent);
-      return c.json(report, report.ok ? 200 : 404);
+
+      if (report.ok) {
+        return c.json(report, 200);
+      }
+
+      return problem(c, {
+        status: 404,
+        title: "Status query unmatched",
+        detail: report.text,
+        extensions: { ok: false, text: report.text },
+      });
     }
 
     const dispatch = intent;
-    const outcome = await ledger.execute(dispatch.intentId, async () => {
-      // Same two-step confirm as consequential actions: dispatch spends real
-      // compute, so an unconfirmed intent is refused and nothing is delivered.
-      if (dispatch.confirmed !== true) {
-        return {
-          entry: {
-            status: 409,
-            body: { message: "Action requires confirmation" },
-          },
-          record: false,
-        };
-      }
-
-      const ack = await intents.dispatch(dispatch);
-      return ack.ok
-        ? { entry: { status: 202, body: ack }, record: true }
-        : { entry: { status: 502, body: ack }, record: false };
+    const fingerprint = requestFingerprint({
+      kind: "dispatch",
+      orchestrator: dispatch.orchestrator,
+      project: dispatch.project ?? null,
+      instruction: dispatch.instruction,
+      confirmed: dispatch.confirmed === true,
     });
+    const outcome = await ledger.execute(
+      dispatch.intentId,
+      fingerprint,
+      async () => {
+        // Same two-step confirm as consequential actions: dispatch spends real
+        // compute, so an unconfirmed intent is refused and nothing is
+        // delivered.
+        if (dispatch.confirmed !== true) {
+          return {
+            entry: {
+              status: 409,
+              body: problemBody({
+                status: 409,
+                type: PROBLEM_TYPES.confirmationRequired,
+                title: "Action requires confirmation",
+                detail: `Dispatch requires confirmation: ${dispatch.instruction}`,
+                extensions: {
+                  verb: "dispatch",
+                  intentId: dispatch.intentId,
+                  orchestrator: dispatch.orchestrator,
+                  summary: `Dispatch to ${dispatch.orchestrator}: ${dispatch.instruction}`,
+                  resend: { ...dispatch, confirmed: true },
+                },
+              }),
+            },
+            record: false,
+          };
+        }
 
-    return c.json(outcome.body, outcome.status as 202);
+        const ack = await intents.dispatch(dispatch);
+        return ack.ok
+          ? { entry: { status: 202, body: ack }, record: true }
+          : {
+              entry: {
+                status: 502,
+                body: problemBody({
+                  status: 502,
+                  title: "Dispatch failed",
+                  detail: ack.message ?? "Dispatch failed",
+                  extensions: { ok: false },
+                }),
+              },
+              record: false,
+            };
+      },
+    );
+
+    return respondLedgerResult(c, outcome, dispatch.intentId);
   });
+}
+
+// Reads and reconciles the two places an idempotency key may arrive (the
+// domain intentId in the body and the IETF Idempotency-Key header). Returns
+// the effective key, or the problem response that settles the request.
+function resolveIdempotencyKey(
+  c: Context,
+  bodyIntentId: unknown,
+): { intentId: string | undefined } | { response: Response } {
+  const header = idempotencyKeyHeader(c);
+
+  if (header !== undefined && !isValidIntentId(header)) {
+    return {
+      response: problem(c, {
+        status: 400,
+        title: "Invalid Idempotency-Key",
+        detail:
+          "Idempotency-Key must be 1-128 filename-safe characters ([A-Za-z0-9._-], no leading dot)",
+      }),
+    };
+  }
+
+  if (bodyIntentId !== undefined && !isValidIntentId(bodyIntentId)) {
+    return {
+      response: problem(c, {
+        status: 400,
+        title: "Invalid intentId",
+      }),
+    };
+  }
+
+  if (
+    header !== undefined &&
+    bodyIntentId !== undefined &&
+    header !== bodyIntentId
+  ) {
+    return {
+      response: problem(c, {
+        status: 400,
+        type: PROBLEM_TYPES.idempotencyKeyMismatch,
+        title: "Idempotency-Key and intentId disagree",
+        detail: `The Idempotency-Key header ("${header}") and the body intentId ("${bodyIntentId}") must carry the same value`,
+        extensions: { idempotencyKey: header, intentId: bodyIntentId },
+      }),
+    };
+  }
+
+  return { intentId: bodyIntentId ?? header };
+}
+
+// The draft encodes the value as a quoted-string; Stripe-style clients send
+// it bare. Accept both.
+function idempotencyKeyHeader(c: Context): string | undefined {
+  const raw = c.req.header("idempotency-key")?.trim();
+
+  if (raw === undefined || raw === "") {
+    return undefined;
+  }
+
+  const unquoted =
+    raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')
+      ? raw.slice(1, -1)
+      : raw;
+
+  return unquoted === "" ? undefined : unquoted;
+}
+
+function respondLedgerResult(
+  c: Context,
+  result: LedgerResult,
+  intentId: string,
+): Response {
+  if (result.kind === "mismatch") {
+    return problem(c, {
+      status: 422,
+      type: PROBLEM_TYPES.sameKeyDifferentPayload,
+      title: "Same idempotency key, different payload",
+      detail: `Intent "${intentId}" was already used for a different request; retries must resend the identical payload`,
+      extensions: { intentId },
+    });
+  }
+
+  return respondLedgerEntry(c, result.entry, result.kind === "replayed");
+}
+
+function respondLedgerEntry(
+  c: Context,
+  entry: LedgerEntry,
+  replayed: boolean,
+): Response {
+  const headers = replayed
+    ? { [IDEMPOTENCY_REPLAYED_HEADER]: "true" }
+    : undefined;
+
+  if (isProblemBody(entry.body)) {
+    return problemResponse(c, entry.body, headers);
+  }
+
+  return c.json(entry.body, entry.status as 200, headers);
+}
+
+function confirmationSummary(label: string, itemId: string): string {
+  return `Confirm ${label} on ${itemId}`;
+}
+
+function parseLastEventId(value: string | undefined): number | undefined {
+  if (value === undefined || !/^\d{1,15}$/.test(value.trim())) {
+    return undefined;
+  }
+
+  return Number(value.trim());
 }
 
 function registerCursorWebhookRoute(app: Hono, deps: ServerDeps): void {
@@ -313,20 +538,24 @@ function registerCursorWebhookRoute(app: Hono, deps: ServerDeps): void {
         signature,
       })
     ) {
-      return c.json({ message: "Invalid cursor signature" }, 401);
+      return problem(c, { status: 401, title: "Invalid cursor signature" });
     }
 
     let body: unknown;
     try {
       body = JSON.parse(rawBody);
     } catch (error) {
-      return c.json({ message: validationMessage(error) }, 400);
+      return problem(c, {
+        status: 400,
+        title: "Invalid cursor webhook body",
+        detail: validationMessage(error),
+      });
     }
 
     const signal = mapCursorStatusChangeToSignal(body);
 
     if (signal === null) {
-      return c.json({ message: "Invalid cursor webhook body" }, 400);
+      return problem(c, { status: 400, title: "Invalid cursor webhook body" });
     }
 
     deps.worldModel.applySignal(
@@ -339,6 +568,7 @@ function registerCursorWebhookRoute(app: Hono, deps: ServerDeps): void {
 
 function stateSnapshot(deps: ServerDeps) {
   return {
+    apiVersion: HUB_API_VERSION,
     ...rank(deps.worldModel.snapshot(), deps.cap),
     generatedAt: new Date().toISOString(),
   };

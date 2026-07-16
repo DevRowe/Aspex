@@ -74,6 +74,8 @@ tailscale serve --bg --https=4318 http://127.0.0.1:4317
 Set the Hub CORS origin to the lab's exact HTTPS origin, for example `ASPEX_HUB_CORS_ORIGIN='https://devbox.example-tailnet.ts.net'`.
 On the device's browser (Chrome on Android XR, Meta Quest Browser, or Edge on HoloLens 2), open that HTTPS lab origin, enter the HTTPS Hub URL such as `https://devbox.example-tailnet.ts.net:4318`, paste the token, save, and choose AR.
 If the installed Tailscale CLI uses a newer Serve syntax, reproduce the same two local reverse proxies and verify both URLs from the device browser before pairing.
+Instead of the second Serve proxy, the Hub can also terminate TLS itself via the `tls` config (`tailscale cert` provisioning; see the "TLS" section of [hub-api.md](hub-api.md)).
+Because the lab is served from a different origin than the Hub, Chromium's Local Network Access policy (Chrome 142+) may prompt or block plain-http Hub calls from secure pages; keeping both endpoints HTTPS on the tailnet, as above, avoids that entirely.
 
 The Android XR emulator (Android Studio) runs Chrome with WebXR `immersive-ar` and can stand in for hardware for everything except comfort and legibility numbers, which need a device on a face.
 

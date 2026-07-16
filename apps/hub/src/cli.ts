@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import {
   installClaudeCodeHooks,
@@ -557,6 +558,32 @@ async function ensureHubToken(
   return { ...cfg, auth: { token } };
 }
 
+// Optional TLS for the tailnet exposure (docs/hub-api.md "TLS"): PEM
+// cert/key, typically provisioned with `tailscale cert`.
+function readTlsMaterial(
+  tls: Awaited<ReturnType<typeof loadConfig>>["tls"],
+): { cert: string; key: string } | undefined {
+  if (tls === undefined) {
+    return undefined;
+  }
+
+  return {
+    cert: readPem(tls.certPath, "tls.certPath"),
+    key: readPem(tls.keyPath, "tls.keyPath"),
+  };
+}
+
+function readPem(path: string, field: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Cannot read ${field} (${path}): ${reason}. Provision a cert with \`tailscale cert <machine>.<tailnet>.ts.net\` or point tls at an existing PEM pair.`,
+    );
+  }
+}
+
 async function runHub(options: {
   configPath?: string;
   mock?: boolean;
@@ -566,6 +593,9 @@ async function runHub(options: {
     options.configPath,
   );
   const hub = buildHub(cfg);
+  // Read TLS material before starting anything so a missing or unreadable
+  // PEM fails fast with the file path, not at the first client handshake.
+  const tls = readTlsMaterial(cfg.tls);
   let stopping = false;
   let server: ReturnType<typeof Bun.serve> | null = null;
 
@@ -574,6 +604,7 @@ async function runHub(options: {
     server = Bun.serve({
       hostname: cfg.hubBind,
       port: cfg.hubPort,
+      ...(tls === undefined ? {} : { tls }),
       fetch: hub.app.fetch,
     });
   } catch (error) {
@@ -582,7 +613,8 @@ async function runHub(options: {
     throw error;
   }
 
-  console.log(`Aspex Hub on http://${hubClientHost(cfg)}:${server.port}`);
+  const scheme = tls === undefined ? "http" : "https";
+  console.log(`Aspex Hub on ${scheme}://${hubClientHost(cfg)}:${server.port}`);
 
   const stop = async () => {
     if (stopping) {

@@ -204,7 +204,9 @@ describe("hub boot", () => {
         readback: "Nothing needs you right now.",
       });
       expect(utterance.status).toBe(503);
-      expect(await utterance.json()).toEqual({ error: "voice not configured" });
+      expect(await utterance.json()).toMatchObject({
+        error: "voice not configured",
+      });
     } finally {
       await hub.stop();
     }
@@ -233,7 +235,9 @@ describe("hub boot", () => {
         intent: { enabled: false },
       });
       expect(intent.status).toBe(503);
-      expect(await intent.json()).toEqual({ error: "intent not configured" });
+      expect(await intent.json()).toMatchObject({
+        error: "intent not configured",
+      });
     } finally {
       await hub.stop();
     }
@@ -279,7 +283,9 @@ describe("hub boot", () => {
       );
 
       expect(intent.status).toBe(503);
-      expect(await intent.json()).toEqual({ error: "intent not configured" });
+      expect(await intent.json()).toMatchObject({
+        error: "intent not configured",
+      });
     } finally {
       await hub.stop();
     }

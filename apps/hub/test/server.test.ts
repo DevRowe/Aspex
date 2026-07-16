@@ -3,7 +3,11 @@ import type { ActionResult } from "@aspex/schema";
 import { Bus } from "../src/bus";
 import { enforceOwnership } from "../src/engine/attention";
 import { type ServerDeps, buildApp } from "../src/http/server";
-import { createSharedFrameSource, createStateStream } from "../src/http/sse";
+import {
+  type SseBroadcaster,
+  createSseBroadcaster,
+  createStateStream,
+} from "../src/http/sse";
 import { openDb } from "../src/store/db";
 import { ItemStore } from "../src/store/itemStore";
 import { WorldModel } from "../src/world/worldModel";
@@ -143,6 +147,18 @@ describe("hub HTTP server", () => {
     );
 
     expect(blocked.status).toBe(409);
+    expect(blocked.headers.get("content-type")).toContain(
+      "application/problem+json",
+    );
+    expect(await blocked.json()).toMatchObject({
+      type: "urn:aspex:problem:confirmation-required",
+      status: 409,
+      message: expect.stringContaining("confirmation"),
+      itemId: "github:pr:owner/repo#42",
+      actionId: "merge",
+      summary: expect.stringContaining("merge"),
+      resend: { payload: { squash: true }, confirmed: true },
+    });
     expect(calls).toEqual([
       {
         itemId: "github:pr:owner/repo#42",
@@ -166,7 +182,15 @@ describe("hub HTTP server", () => {
     );
 
     expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ message: "Invalid Signal" });
+    expect(response.headers.get("content-type")).toContain(
+      "application/problem+json",
+    );
+    expect(await response.json()).toMatchObject({
+      type: "about:blank",
+      title: "Invalid Signal",
+      status: 400,
+      message: "Invalid Signal",
+    });
     db.close();
   });
 
@@ -257,18 +281,23 @@ describe("hub HTTP server", () => {
     const update = await reader?.read();
     await reader?.cancel();
 
-    expect(decode(initial?.value)).toContain("event: state\ndata:");
+    expect(decode(initial?.value)).toContain("retry: ");
+    expect(decode(initial?.value)).toContain("id: 0\nevent: state\ndata:");
+    expect(decode(update?.value)).toContain("id: 1\nevent: state\ndata:");
     expect(decode(update?.value)).toContain("codex:session:blocked");
     db.close();
   });
 
   test("state stream cleanup unsubscribes when cancelled", async () => {
     let unsubscribed = false;
-    const stream = createStateStream({
-      snapshot: () => ({ ok: true }),
+    const broadcaster = fakeBroadcaster({
       subscribe: () => () => {
         unsubscribed = true;
       },
+    });
+    const stream = createStateStream({
+      snapshot: () => ({ ok: true }),
+      broadcaster,
     });
     const reader = stream.getReader();
 
@@ -280,12 +309,15 @@ describe("hub HTTP server", () => {
 
   test("a frame sent to a dead stream is contained instead of thrown", async () => {
     let send: ((frame: string) => void) | undefined;
-    const stream = createStateStream({
-      snapshot: () => ({ ok: true }),
+    const broadcaster = fakeBroadcaster({
       subscribe: (sendFrame) => {
         send = sendFrame;
         return () => {};
       },
+    });
+    const stream = createStateStream({
+      snapshot: () => ({ ok: true }),
+      broadcaster,
     });
     const reader = stream.getReader();
 
@@ -297,35 +329,194 @@ describe("hub HTTP server", () => {
     expect(() => send?.("event: state\ndata: {}\n\n")).not.toThrow();
   });
 
-  test("shared frame source encodes once per event for all subscribers", () => {
-    let encodes = 0;
-    let notify: (() => void) | undefined;
-    const subscribe = createSharedFrameSource({
-      encode: () => {
-        encodes += 1;
-        return "event: state\ndata: {}\n\n";
-      },
-      attach: (onEvent) => {
-        notify = onEvent;
-        return () => {
-          notify = undefined;
-        };
-      },
+  test("keepalives are a named ping event without an id", async () => {
+    const stream = createStateStream({
+      snapshot: () => ({ ok: true }),
+      broadcaster: fakeBroadcaster({}),
+      pingMs: 5,
     });
+    const reader = stream.getReader();
+
+    await reader.read();
+    const ping = await reader.read();
+    await reader.cancel();
+
+    expect(decode(ping?.value)).toBe("event: ping\ndata: {}\n\n");
+  });
+
+  test("broadcaster assigns monotonic ids and replays from the ring", () => {
+    const broadcaster = createSseBroadcaster({ bufferSize: 2 });
     const received: string[] = [];
-    const unsubscribeA = subscribe((frame) => received.push(`a:${frame}`));
-    const unsubscribeB = subscribe((frame) => received.push(`b:${frame}`));
+    broadcaster.subscribe((frame) => received.push(frame));
 
-    notify?.();
+    broadcaster.publish("state", { n: 1 });
+    broadcaster.publish("state", { n: 2 });
+    broadcaster.publish("state", { n: 3 });
 
-    expect(encodes).toBe(1);
-    expect(received).toHaveLength(2);
+    expect(received).toEqual([
+      'id: 1\nevent: state\ndata: {"n":1}\n\n',
+      'id: 2\nevent: state\ndata: {"n":2}\n\n',
+      'id: 3\nevent: state\ndata: {"n":3}\n\n',
+    ]);
+    expect(broadcaster.lastEventId()).toBe(3);
+    // Current client: nothing to replay.
+    expect(broadcaster.replaySince(3)).toEqual([]);
+    // One event behind, inside the ring.
+    expect(broadcaster.replaySince(2)).toEqual([
+      'id: 3\nevent: state\ndata: {"n":3}\n\n',
+    ]);
+    // id 1 was evicted (bufferSize 2), so resuming from 0 is impossible.
+    expect(broadcaster.replaySince(0)).toBeNull();
+    // A future id (previous Hub run) cannot be replayed either.
+    expect(broadcaster.replaySince(99)).toBeNull();
+  });
 
-    unsubscribeA();
-    unsubscribeB();
-    expect(notify).toBeUndefined();
+  test("GET /stream honors Last-Event-ID with replay, snapshot fallback when too old", async () => {
+    const { app, db, worldModel } = openServer();
+
+    worldModel.applySignal({
+      id: "codex:session:one",
+      source: "codex",
+      project: "aspex",
+      state: "blocked",
+      summary: "First",
+    });
+    worldModel.applySignal({
+      id: "codex:session:two",
+      source: "codex",
+      project: "aspex",
+      state: "blocked",
+      summary: "Second",
+    });
+
+    // Reconnect that saw id 1: gets only the missed frame, no snapshot.
+    const resumed = await app.fetch(
+      new Request("http://hub.test/stream", {
+        headers: { "Last-Event-ID": "1" },
+      }),
+    );
+    const resumedReader = resumed.body?.getReader();
+    const resumedChunk = decode((await resumedReader?.read())?.value);
+    await resumedReader?.cancel();
+    expect(resumedChunk).toContain("retry: ");
+    expect(resumedChunk).toContain("id: 2\nevent: state\ndata:");
+    expect(resumedChunk).not.toContain("id: 1\n");
+
+    // Unknown/too-old id: fresh snapshot stamped with the current id.
+    const stale = await app.fetch(
+      new Request("http://hub.test/stream", {
+        headers: { "Last-Event-ID": "999" },
+      }),
+    );
+    const staleReader = stale.body?.getReader();
+    const staleChunk = decode((await staleReader?.read())?.value);
+    await staleReader?.cancel();
+    expect(staleChunk).toContain("id: 2\nevent: state\ndata:");
+    expect(staleChunk).toContain("codex:session:two");
+    db.close();
+  });
+
+  test("GET /state advertises the wire protocol version", async () => {
+    const { app, db } = openServer();
+
+    const body = await (
+      await app.fetch(new Request("http://hub.test/state"))
+    ).json();
+
+    expect(body.apiVersion).toBe("1.1");
+    db.close();
+  });
+
+  test("POST /actions accepts the Idempotency-Key header as the intent id", async () => {
+    const { app, calls, db } = openServer();
+    const request = () =>
+      app.fetch(
+        new Request("http://hub.test/actions/item-1/restart", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "Idempotency-Key": "key-1",
+          },
+          body: JSON.stringify({ payload: { a: 1 } }),
+        }),
+      );
+
+    const first = await request();
+    const second = await request();
+
+    expect(first.status).toBe(200);
+    expect(first.headers.get("Idempotency-Replayed")).toBeNull();
+    expect(second.status).toBe(200);
+    expect(second.headers.get("Idempotency-Replayed")).toBe("true");
+    expect(await second.json()).toEqual(await first.json());
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.payload).toMatchObject({ intentId: "key-1" });
+    db.close();
+  });
+
+  test("POST /actions rejects a header/body idempotency key disagreement", async () => {
+    const { app, calls, db } = openServer();
+
+    const response = await app.fetch(
+      new Request("http://hub.test/actions/item-1/restart", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "Idempotency-Key": "key-a",
+        },
+        body: JSON.stringify({ intentId: "key-b" }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      type: "urn:aspex:problem:idempotency-key-mismatch",
+      status: 400,
+      idempotencyKey: "key-a",
+      intentId: "key-b",
+    });
+    expect(calls).toHaveLength(0);
+    db.close();
+  });
+
+  test("POST /actions answers 422 for the same key with a different payload", async () => {
+    const { app, calls, db } = openServer();
+    const request = (payload: unknown) =>
+      app.fetch(
+        new Request("http://hub.test/actions/item-1/restart", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ intentId: "key-2", payload }),
+        }),
+      );
+
+    const first = await request({ a: 1 });
+    const conflicting = await request({ a: 2 });
+
+    expect(first.status).toBe(200);
+    expect(conflicting.status).toBe(422);
+    expect(conflicting.headers.get("content-type")).toContain(
+      "application/problem+json",
+    );
+    expect(await conflicting.json()).toMatchObject({
+      type: "urn:aspex:problem:same-key-different-payload",
+      status: 422,
+      intentId: "key-2",
+    });
+    expect(calls).toHaveLength(1);
+    db.close();
   });
 });
+
+function fakeBroadcaster(overrides: Partial<SseBroadcaster>): SseBroadcaster {
+  return {
+    publish: () => {},
+    subscribe: () => () => {},
+    lastEventId: () => 0,
+    replaySince: () => null,
+    ...overrides,
+  };
+}
 
 function decode(value: Uint8Array | undefined): string {
   return new TextDecoder().decode(value);

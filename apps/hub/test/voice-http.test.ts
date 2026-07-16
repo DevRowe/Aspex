@@ -142,7 +142,7 @@ describe("hub HTTP voice routes", () => {
     );
 
     expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ message: "Missing audio" });
+    expect(await response.json()).toMatchObject({ message: "Missing audio" });
   });
 
   test("POST /voice/utterance returns 503 when voice gateway is not configured", async () => {
@@ -157,7 +157,10 @@ describe("hub HTTP voice routes", () => {
     );
 
     expect(response.status).toBe(503);
-    expect(await response.json()).toEqual({ error: "voice not configured" });
+    expect(await response.json()).toMatchObject({
+      error: "voice not configured",
+      status: 503,
+    });
   });
 
   test("GET /voice/health returns configured shape", async () => {
@@ -250,7 +253,9 @@ describe("hub HTTP voice routes", () => {
       }),
     );
     expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ message: "Invalid voice session" });
+    expect(await response.json()).toMatchObject({
+      message: "Invalid voice session",
+    });
   });
 
   test("POST /voice/cancel clears a server-side arm without dispatching", async () => {

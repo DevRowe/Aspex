@@ -307,6 +307,32 @@ export const aspexConfigSchema = z.object({
       }
     })
     .optional(),
+  // Optional TLS for the Hub's tailnet exposure (docs/hub-api.md "TLS"):
+  // Snap requires wss/https to publish, and Meta web apps plus Chrome Local
+  // Network Access push the same way. Point at a PEM cert/key pair, e.g. the
+  // output of `tailscale cert <machine>.<tailnet>.ts.net`. Off by default;
+  // loopback development stays plain http.
+  tls: z
+    .object({
+      certPath: z.string({ error: "must be a string" }).default(""),
+      keyPath: z.string({ error: "must be a string" }).default(""),
+    })
+    .transform((tls, ctx) => {
+      const certPath = tls.certPath.trim();
+      const keyPath = tls.keyPath.trim();
+
+      if (certPath === "" || keyPath === "") {
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "requires both certPath and keyPath (PEM files, e.g. from `tailscale cert`)",
+        });
+        return z.NEVER;
+      }
+
+      return { certPath: expandHome(certPath), keyPath: expandHome(keyPath) };
+    })
+    .optional(),
   dbPath: requiredString("must be a non-empty string")
     .transform(expandHome)
     .prefault("~/.aspex/aspex.sqlite"),
@@ -410,6 +436,8 @@ const ENV_OVERRIDES: EnvOverride[] = [
   ["ASPEX_HUB_BIND", "hubBind", envString],
   ["ASPEX_HUB_CORS_ORIGIN", "corsOrigin", envString],
   ["ASPEX_HUB_TOKEN", "auth.token", envString],
+  ["ASPEX_HUB_TLS_CERT", "tls.certPath", envString],
+  ["ASPEX_HUB_TLS_KEY", "tls.keyPath", envString],
   ["ASPEX_DB_PATH", "dbPath", envString],
   ["ASPEX_NEEDS_ME_CAP", "needsMeCap", envPositiveInt],
   ["ASPEX_POLL_INTERVAL_MS", "pollIntervalMs", envPositiveInt],

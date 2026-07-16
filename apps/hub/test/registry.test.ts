@@ -309,6 +309,7 @@ describe("AdapterRegistry", () => {
 
     expect(registry.actionMeta("github:pr:o/r#1", "merge")).toEqual({
       requiresConfirmation: true,
+      label: "Merge",
     });
     expect(registry.actionMeta("github:pr:o/r#1", "approve")).toBeNull();
 
