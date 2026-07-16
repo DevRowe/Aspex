@@ -169,11 +169,13 @@ export class HubClient {
       return;
     }
     if (streamResponse.status === 401 || streamResponse.status === 403) {
+      controller.abort();
       this.streamAbort = null;
       this.emit("auth_failed", "Hub rejected the bearer token.");
       return;
     }
     if (!streamResponse.ok || streamResponse.body === null) {
+      controller.abort();
       this.streamAbort = null;
       this.scheduleReconnect(
         generation,

@@ -70,6 +70,40 @@ describe("hubClient auth", () => {
     stream.close();
   });
 
+  test("halts reconnection when the stream rejects the bearer token", async () => {
+    const retryDelays: number[] = [];
+    const errors: unknown[][] = [];
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalConsoleError = console.error;
+    (globalThis as { window?: unknown }).window = tauriWindow("stream-token");
+    globalThis.fetch = ((_input: RequestInfo | URL, _init?: RequestInit) =>
+      Promise.resolve(
+        new Response("unauthorized", { status: 401 }),
+      )) as typeof fetch;
+    console.error = (...args: unknown[]) => {
+      errors.push(args);
+    };
+    globalThis.setTimeout = ((handler: () => void, delay?: number) => {
+      if (delay !== undefined && delay > 0) {
+        retryDelays.push(delay);
+      }
+      return originalSetTimeout(handler, delay);
+    }) as typeof setTimeout;
+
+    try {
+      const stream = await connect();
+      await tick();
+      stream.close();
+    } finally {
+      console.error = originalConsoleError;
+      globalThis.setTimeout = originalSetTimeout;
+    }
+
+    expect(errors).toHaveLength(1);
+    expect(retryDelays).toEqual([]);
+    expect(useStore.getState().connected).toBe(false);
+  });
+
   test("sends the Tauri Hub token on action requests", async () => {
     let request: Request | undefined;
     (globalThis as { window?: unknown }).window = tauriWindow("action-token");

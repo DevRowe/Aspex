@@ -31,6 +31,7 @@ export async function connect(): Promise<HubStream> {
   let closed = false;
   let abort: AbortController | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  let retryResolve: (() => void) | undefined;
 
   const handleEvent = (message: EventSourceMessage): void => {
     try {
@@ -38,20 +39,28 @@ export async function connect(): Promise<HubStream> {
         useStore.getState().setState(JSON.parse(message.data) as RankedState);
       }
       // Unknown event types are tolerated and ignored.
-    } catch {
+    } catch (error) {
       // A malformed event must not tear down the stream.
+      console.warn("Ignoring malformed Hub stream event", error);
     }
   };
 
   const run = async (): Promise<void> => {
     while (!closed) {
-      abort = new AbortController();
+      const controller = new AbortController();
+      abort = controller;
       try {
         const response = await hubFetch(`${hub}/stream`, {
           headers: { accept: "text/event-stream" },
           cache: "no-store",
-          signal: abort.signal,
+          signal: controller.signal,
         });
+        if (response.status === 401 || response.status === 403) {
+          console.error(
+            `Hub stream rejected the bearer token with HTTP ${response.status}; not retrying until reconnected.`,
+          );
+          return;
+        }
         if (!response.ok || response.body === null) {
           throw new Error(`Hub stream failed with HTTP ${response.status}`);
         }
@@ -68,14 +77,19 @@ export async function connect(): Promise<HubStream> {
         }
       } catch {
         // Unreachable Hub or aborted stream; fall through to reconnect.
+      } finally {
+        controller.abort();
+        useStore.getState().setConnected(false);
       }
-      useStore.getState().setConnected(false);
       if (closed) {
         return;
       }
       await new Promise<void>((resolve) => {
+        retryResolve = resolve;
         retryTimer = setTimeout(resolve, STREAM_RETRY_MS);
       });
+      retryTimer = undefined;
+      retryResolve = undefined;
     }
   };
   void run();
@@ -86,7 +100,10 @@ export async function connect(): Promise<HubStream> {
       abort?.abort();
       if (retryTimer !== undefined) {
         clearTimeout(retryTimer);
+        retryTimer = undefined;
       }
+      retryResolve?.();
+      retryResolve = undefined;
     },
   };
 }
