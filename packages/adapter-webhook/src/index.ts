@@ -8,7 +8,7 @@ import type {
   Signal,
   State,
 } from "@aspex/schema";
-import { webhookId } from "@aspex/schema";
+import { isRecord, trimmedStringField, webhookId } from "@aspex/schema";
 
 export const WEBHOOK_SOURCE = "webhook" as const;
 
@@ -63,7 +63,7 @@ export function normalizeWebhookBody(body: unknown): Signal {
     throw new Error("Invalid webhook body");
   }
 
-  const summary = stringField(body.summary);
+  const summary = trimmedStringField(body.summary);
 
   if (summary === undefined) {
     throw new Error("Invalid webhook body");
@@ -77,7 +77,7 @@ export function normalizeWebhookBody(body: unknown): Signal {
   return {
     id: signalIdFor(body),
     source: WEBHOOK_SOURCE,
-    project: stringField(body.project) ?? WEBHOOK_SOURCE,
+    project: trimmedStringField(body.project) ?? WEBHOOK_SOURCE,
     state:
       stateField(body.state) ??
       (attentionRequired ? "needs_review" : "working"),
@@ -90,13 +90,13 @@ export function normalizeWebhookBody(body: unknown): Signal {
 }
 
 function signalIdFor(body: Record<string, unknown>): string {
-  const key = stringField(body.key);
+  const key = trimmedStringField(body.key);
 
   if (key !== undefined) {
     return webhookId(key);
   }
 
-  const id = stringField(body.id);
+  const id = trimmedStringField(body.id);
 
   if (id !== undefined && isWebhookId(id)) {
     return id;
@@ -121,7 +121,7 @@ function evidenceField(value: unknown): Evidence[] {
       return [];
     }
 
-    const label = stringField(entry.label);
+    const label = trimmedStringField(entry.label);
 
     if (label === undefined) {
       return [];
@@ -130,11 +130,11 @@ function evidenceField(value: unknown): Evidence[] {
     return [
       {
         label,
-        ...(stringField(entry.url) !== undefined
-          ? { url: stringField(entry.url) }
+        ...(trimmedStringField(entry.url) !== undefined
+          ? { url: trimmedStringField(entry.url) }
           : {}),
-        ...(stringField(entry.text) !== undefined
-          ? { text: stringField(entry.text) }
+        ...(trimmedStringField(entry.text) !== undefined
+          ? { text: trimmedStringField(entry.text) }
           : {}),
       },
     ];
@@ -149,19 +149,9 @@ function severityField(value: unknown): Severity | undefined {
   return includesString(SEVERITIES, value) ? value : undefined;
 }
 
-function stringField(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0
-    ? value.trim()
-    : undefined;
-}
-
 function includesString<T extends string>(
   values: readonly T[],
   value: unknown,
 ): value is T {
   return typeof value === "string" && values.includes(value as T);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

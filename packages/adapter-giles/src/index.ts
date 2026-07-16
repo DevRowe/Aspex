@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { isMergeWord, parseItemId } from "@aspex/schema";
+import {
+  errorMessage,
+  isMergeWord,
+  isRecord,
+  parseItemId,
+} from "@aspex/schema";
 import type {
   Action,
   ActionResult,
@@ -363,14 +368,6 @@ const bunExec: ExecFn = async (argv) => {
 
 function isItemScopedVerb(actionId: string): actionId is ItemScopedVerb {
   return ITEM_SCOPED_VERBS.has(actionId as ItemScopedVerb);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 export * from "./inbox";

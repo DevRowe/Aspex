@@ -5,6 +5,7 @@ import type {
   AdapterContext,
   Signal,
 } from "@aspex/schema";
+import { errorMessage, githubItemId, isRecord } from "@aspex/schema";
 import { Octokit } from "@octokit/rest";
 import { type GithubActionClient, runGithubAction } from "./actions";
 import {
@@ -12,11 +13,7 @@ import {
   type GithubRestClient,
   discoverGithubPullRequests,
 } from "./discover";
-import {
-  type GithubRawPullRequest,
-  githubItemId,
-  mapGithubPullRequest,
-} from "./map";
+import { type GithubRawPullRequest, mapGithubPullRequest } from "./map";
 
 export interface GithubAdapterOptions {
   token: string;
@@ -128,6 +125,7 @@ export class GithubAdapter implements Adapter {
         ctx.emit(signal);
       }
 
+      this.sweepCaches(rawPullRequests);
       ctx.heartbeat("github");
       ctx.log(`discovered ${signals.length} GitHub pull requests`);
 
@@ -140,16 +138,38 @@ export class GithubAdapter implements Adapter {
       this.running = false;
     }
   }
+
+  // Drop cache entries for PRs (and head SHAs) that left the current poll
+  // cycle - merged/closed PRs and superseded pushes - mirroring the
+  // adapter-giles departed-task sweep. The Hub runs ambiently for days, so
+  // unbounded per-SHA and per-item maps are a real leak. Only reached on a
+  // successful poll, so a transient discovery failure cannot mass-evict.
+  private sweepCaches(rawPullRequests: GithubRawPullRequest[]): void {
+    const liveItems = new Set(rawPullRequests.map((pr) => githubItemId(pr)));
+    const liveShas = new Set(
+      rawPullRequests.map((pr) => `${pr.owner}/${pr.repo}@${pr.headSha}`),
+    );
+
+    for (const itemId of this.actionsByItem.keys()) {
+      if (!liveItems.has(itemId)) {
+        this.actionsByItem.delete(itemId);
+      }
+    }
+
+    for (const itemId of this.rawByItem.keys()) {
+      if (!liveItems.has(itemId)) {
+        this.rawByItem.delete(itemId);
+      }
+    }
+
+    for (const key of this.checkCache.keys()) {
+      if (!liveShas.has(key)) {
+        this.checkCache.delete(key);
+      }
+    }
+  }
 }
 
 export * from "./actions";
 export * from "./discover";
 export * from "./map";
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}

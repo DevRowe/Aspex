@@ -1,3 +1,4 @@
+import { isRecord } from "./guards";
 import type { ItemId } from "./index";
 
 // Attached by the client to every utterance or typed intent so the Hub can resolve referents (ADR-0011).
@@ -100,9 +101,6 @@ const DIRECTIVE_TYPES = [
   "none",
 ] as const;
 const MOVE_DELTAS = [1, -1] as const;
-
-const isRecord = (x: unknown): x is Record<string, unknown> =>
-  typeof x === "object" && x !== null;
 
 const includesString = <T extends string>(
   values: readonly T[],

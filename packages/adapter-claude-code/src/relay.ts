@@ -1,3 +1,4 @@
+import { isRecord } from "@aspex/schema";
 import { mapClaudeHookToSignal } from "./index";
 
 export type HookRelaySource = "claude-code" | "codex";
@@ -93,10 +94,6 @@ async function readAll(stream: ReadableStream<Uint8Array>): Promise<string> {
   }
 
   return new TextDecoder().decode(concat(chunks));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function concat(chunks: Uint8Array[]): Uint8Array {

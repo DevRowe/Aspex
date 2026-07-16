@@ -1,13 +1,22 @@
 import type { ItemId } from "./types";
 
-export const githubPrId = (repo: string, number: number): ItemId =>
-  `github:pr:${repo}#${number}`;
+export const githubItemId = (pr: {
+  owner: string;
+  repo: string;
+  number: number;
+}): ItemId => `github:pr:${pr.owner}/${pr.repo}#${pr.number}`;
 
 export const claudeSessionId = (sessionId: string): ItemId =>
   `claude-code:session:${sessionId}`;
 
 export const codexSessionId = (threadId: string): ItemId =>
   `codex:session:${threadId}`;
+
+export const cursorAgentId = (agentId: string): ItemId =>
+  `cursor:agent:${agentId}`;
+
+export const openCodeSessionId = (sessionId: string): ItemId =>
+  `opencode:session:${sessionId}`;
 
 export const webhookId = (key: string): ItemId => `webhook:${key}`;
 

@@ -1,4 +1,5 @@
 import type { ActionResult, Adapter, AdapterContext } from "./adapter";
+import { isRecord } from "./guards";
 import type { Action, ItemId } from "./types";
 
 // An Orchestrator is a bidirectional peer that OWNS agents, distinct from an
@@ -73,9 +74,6 @@ export interface StatusReport {
   ok: boolean;
   text: string;
 }
-
-const isRecord = (x: unknown): x is Record<string, unknown> =>
-  typeof x === "object" && x !== null && !Array.isArray(x);
 
 const isNonEmptyString = (value: unknown): value is string =>
   typeof value === "string" && value.trim().length > 0;

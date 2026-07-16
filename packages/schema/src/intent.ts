@@ -1,3 +1,4 @@
+import { isRecord } from "./guards";
 import type { Intent, ItemId, VoiceContext } from "./index";
 
 export type IntentSource = "grammar" | "freeform";
@@ -58,9 +59,6 @@ const DIRECTIVE_TYPES = [
   "open",
   "none",
 ] as const;
-
-const isRecord = (x: unknown): x is Record<string, unknown> =>
-  typeof x === "object" && x !== null && !Array.isArray(x);
 
 const includesString = <T extends string>(
   values: readonly T[],

@@ -1,4 +1,5 @@
 import type { Signal } from "@aspex/schema";
+import { cursorAgentId, isRecord, stringAt } from "@aspex/schema";
 
 export const CURSOR_SOURCE = "cursor" as const;
 
@@ -73,10 +74,6 @@ export function mapCursorStatusChangeToSignal(
   };
 }
 
-function cursorAgentId(agentId: string): string {
-  return `${CURSOR_SOURCE}:agent:${agentId}`;
-}
-
 function statusField(
   payload: Record<string, unknown>,
 ): CursorStatus | undefined {
@@ -96,28 +93,4 @@ function summaryFor(
     stringAt(payload, ["summary", "title", "message", "error.message"]) ??
     (status === "ERROR" ? "Cursor agent errored" : "Cursor agent finished")
   );
-}
-
-function stringAt(
-  value: Record<string, unknown>,
-  paths: readonly string[],
-): string | undefined {
-  for (const path of paths) {
-    const found = path
-      .split(".")
-      .reduce<unknown>(
-        (current, key) => (isRecord(current) ? current[key] : undefined),
-        value,
-      );
-
-    if (typeof found === "string" && found.trim().length > 0) {
-      return found.trim();
-    }
-  }
-
-  return undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

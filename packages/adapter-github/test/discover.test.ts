@@ -3,8 +3,10 @@ import type { AdapterContext } from "@aspex/schema";
 import {
   GithubAdapter,
   type GithubRestClient,
+  type GithubReviewResponse,
   discoverGithubPullRequests,
   githubSearchQueries,
+  isApprovedByReviews,
   mapGithubPullRequest,
 } from "../src";
 
@@ -78,7 +80,13 @@ function makeClient(): GithubRestClient {
           return {
             data:
               params.pull_number === 16
-                ? [{ state: "APPROVED", submitted_at: "2026-06-28T00:00:00Z" }]
+                ? [
+                    {
+                      state: "APPROVED",
+                      submitted_at: "2026-06-28T00:00:00Z",
+                      user: { login: "reviewer" },
+                    },
+                  ]
                 : [],
           };
         },
@@ -367,6 +375,85 @@ describe("GitHub discovery", () => {
     ]);
   });
 
+  test("paginates reviews past the first page before judging approval", async () => {
+    const reviewPages = new Map<number, GithubReviewResponse[]>([
+      [
+        1,
+        Array.from({ length: 100 }, (_, i) => ({
+          state: "COMMENTED",
+          submitted_at: `2026-06-01T00:${String(i).padStart(2, "0")}:00Z`,
+          user: { login: `commenter-${i}` },
+        })),
+      ],
+      [
+        2,
+        [
+          {
+            state: "APPROVED",
+            submitted_at: "2026-06-28T00:00:00Z",
+            user: { login: "reviewer" },
+          },
+        ],
+      ],
+    ]);
+    const client = makeClient() as GithubRestClient & { calls: Call[] };
+    client.rest.pulls.listReviews = async (params) => {
+      client.calls.push({ method: "pulls.listReviews", params });
+
+      if (params.pull_number !== 16) {
+        return { data: [] };
+      }
+
+      return { data: reviewPages.get(params.page ?? 1) ?? [] };
+    };
+
+    const rawPullRequests = await discoverGithubPullRequests(client);
+    const green = rawPullRequests.find((pr) => pr.number === 16);
+
+    expect(green?.approved).toBe(true);
+    expect(
+      client.calls
+        .filter((call) => call.method === "pulls.listReviews")
+        .filter(
+          (call) => (call.params as { pull_number: number }).pull_number === 16,
+        ),
+    ).toHaveLength(2);
+  });
+
+  test("adapter sweeps caches for PRs that left the poll cycle", async () => {
+    let includeSecondPr = true;
+    const client = makeClient() as GithubRestClient & { calls: Call[] };
+    const search = client.rest.search.issuesAndPullRequests;
+    client.rest.search.issuesAndPullRequests = async (params) => {
+      const response = await search(params);
+
+      return includeSecondPr
+        ? response
+        : {
+            data: {
+              items: response.data.items.filter((item) => item.number !== 16),
+            },
+          };
+    };
+    const { ctx } = context();
+    const adapter = new GithubAdapter({
+      token: "test-token",
+      client: client as never,
+      setInterval: (() => 1) as never,
+      clearInterval: (() => undefined) as never,
+    });
+
+    await adapter.poll(ctx);
+
+    expect(adapter.listActions("github:pr:brocorp/aspex#16")).not.toEqual([]);
+
+    includeSecondPr = false;
+    await adapter.poll(ctx);
+
+    expect(adapter.listActions("github:pr:brocorp/aspex#16")).toEqual([]);
+    expect(adapter.listActions("github:pr:brocorp/aspex#15")).not.toEqual([]);
+  });
+
   test("adapter heartbeats only after successful discovery", async () => {
     const client = makeClient();
     const { ctx, emitted, heartbeats } = context();
@@ -382,5 +469,75 @@ describe("GitHub discovery", () => {
     expect(emitted).toHaveLength(2);
     expect(heartbeats).toEqual(["github"]);
     await adapter.stop();
+  });
+});
+
+describe("GitHub review approval semantics", () => {
+  const review = (
+    login: string,
+    state: string,
+    submittedAt: string,
+  ): GithubReviewResponse => ({
+    state,
+    submitted_at: submittedAt,
+    user: { login },
+  });
+
+  test("a later COMMENTED review does not supersede an approval", () => {
+    expect(
+      isApprovedByReviews([
+        review("alice", "APPROVED", "2026-06-01T00:00:00Z"),
+        review("alice", "COMMENTED", "2026-06-02T00:00:00Z"),
+      ]),
+    ).toBe(true);
+  });
+
+  test("a later approval supersedes the same reviewer's changes request", () => {
+    expect(
+      isApprovedByReviews([
+        review("alice", "CHANGES_REQUESTED", "2026-06-01T00:00:00Z"),
+        review("alice", "APPROVED", "2026-06-02T00:00:00Z"),
+      ]),
+    ).toBe(true);
+  });
+
+  test("another reviewer's standing changes request blocks approval", () => {
+    expect(
+      isApprovedByReviews([
+        review("alice", "APPROVED", "2026-06-02T00:00:00Z"),
+        review("bob", "CHANGES_REQUESTED", "2026-06-01T00:00:00Z"),
+      ]),
+    ).toBe(false);
+  });
+
+  test("a dismissed review clears the reviewer's verdict", () => {
+    expect(
+      isApprovedByReviews([
+        review("alice", "DISMISSED", "2026-06-01T00:00:00Z"),
+      ]),
+    ).toBe(false);
+    expect(
+      isApprovedByReviews([
+        review("alice", "DISMISSED", "2026-06-01T00:00:00Z"),
+        review("bob", "APPROVED", "2026-06-02T00:00:00Z"),
+      ]),
+    ).toBe(true);
+  });
+
+  test("comment-only reviews never approve", () => {
+    expect(
+      isApprovedByReviews([
+        review("alice", "COMMENTED", "2026-06-01T00:00:00Z"),
+      ]),
+    ).toBe(false);
+    expect(isApprovedByReviews([])).toBe(false);
+  });
+
+  test("reviews without a reviewer login are ignored", () => {
+    expect(
+      isApprovedByReviews([
+        { state: "APPROVED", submitted_at: "2026-06-01T00:00:00Z" },
+      ]),
+    ).toBe(false);
   });
 });
