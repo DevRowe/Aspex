@@ -44,8 +44,11 @@ export function hubAuth(expectedToken: string): MiddlewareHandler {
   };
 }
 
-// Header for most endpoints; `?token=` query parameter for the SSE stream, since
-// the browser EventSource API cannot set an Authorization header.
+// Header for all endpoints. The SSE stream also accepts a `?token=` query
+// parameter, now DEPRECATED: first-party clients stream over fetch-based SSE
+// with the Authorization header, so the query form survives only as the escape
+// hatch for native EventSource clients (which cannot set headers). Its removal
+// is deferred until after the owner's on-device wear test.
 function presentedToken(c: Context): string | undefined {
   const header = c.req.header("authorization");
 

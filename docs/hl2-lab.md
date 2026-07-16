@@ -16,7 +16,9 @@ bun run --cwd apps/hl2-lab dev
 Open `http://localhost:4174` in Chromium.
 Pair the exact Hub URL and local bearer token in Settings.
 The Hub URL is persisted for convenience, while the bearer token is kept only in tab-scoped session storage, entered through a masked field, and never logged.
-The EventSource token query is constructed only in memory because browsers cannot attach authorization headers to `EventSource`.
+The client streams `/stream` over fetch-based SSE (`eventsource-parser`) and sends the token as an `Authorization: Bearer` header, the same way it hydrates `/state`.
+The Hub still accepts a `?token=` query on the stream, but that form is deprecated: it exists only as the escape hatch for native `EventSource` clients, which cannot set request headers, and its removal is deferred until after the owner's on-device wear test.
+Fetch-based SSE also sidesteps Chrome's Local Network Access constraints, which matter here because the lab client is served via Tailscale rather than the Hub origin: when Chrome requires it, the fetch call can declare `targetAddressSpace` to reach a more-private address space, an option `EventSource` never gained.
 
 Mouse movement simulates gaze, click simulates pinch, Left/Right moves through the ranked carousel, Enter selects the focused target, and holding V simulates push-to-talk.
 The same focus and select controller is fed by WebXR target rays and `selectstart`/`select`/`selectend` events in immersive AR.
