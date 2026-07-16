@@ -1,5 +1,6 @@
 package dev.aspex.glimmerlab.api
 
+import android.util.Log
 import java.io.IOException
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -12,7 +13,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import okhttp3.Call
 import okhttp3.Callback
@@ -41,8 +46,10 @@ class HubClient(
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
-        // SSE stream: no read timeout, the Hub pushes frames indefinitely.
-        .readTimeout(0, TimeUnit.MILLISECONDS)
+        // SSE stream: the Hub comments `: ping` every 15s (apps/hub/src/http
+        // /sse.ts), so a read timeout well above that turns a silently dead
+        // connection into onFailure and lets the caller reconnect.
+        .readTimeout(45, TimeUnit.SECONDS)
         .build()
 
     // Unary calls need real timeouts so a stalled Hub cannot pin the UI on
@@ -85,6 +92,7 @@ class HubClient(
                 if (type != "state") return
                 runCatching { json.decodeFromString<StateSnapshot>(data) }
                     .onSuccess { trySend(HubEvent.Snapshot(it)) }
+                    .onFailure { Log.w(TAG, "dropped undecodable state frame", it) }
             }
 
             override fun onClosed(eventSource: EventSource) {
@@ -134,7 +142,14 @@ class HubClient(
         return runCatching { unaryClient.newCall(httpRequest).await() }.fold(
             onSuccess = { (code, text) ->
                 when {
-                    code == 200 -> ActionOutcome.Success(text)
+                    // The Hub answers 200 with `{ok:false, message}` for
+                    // adapter-level failures, and the intent ledger records
+                    // only ok:true entries; mirror the web client's
+                    // `body.ok !== false` check so those surface as failures.
+                    code == 200 -> when (val failure = adapterFailureMessage(text)) {
+                        null -> ActionOutcome.Success(text)
+                        else -> ActionOutcome.Failure(code, failure)
+                    }
                     // The confirmation gate is only recognizable by status
                     // code + prose today; see the PR notes on Decision 1.
                     code == 409 -> ActionOutcome.NeedsConfirmation(text)
@@ -172,7 +187,27 @@ class HubClient(
             },
         )
     }
+
+    private companion object {
+        const val TAG = "HubClient"
+    }
 }
+
+/**
+ * Extracts the failure message from a 200 response whose body carries the
+ * Hub's adapter-level `{ok:false, message}` shape; returns null for ok
+ * bodies and for anything unparseable, matching the web client's
+ * `body.ok !== false` semantics (apps/web `hubClient.ts`).
+ */
+internal fun adapterFailureMessage(body: String): String? =
+    runCatching {
+        val obj = Json.parseToJsonElement(body).jsonObject
+        if (obj["ok"]?.jsonPrimitive?.booleanOrNull == false) {
+            obj["message"]?.jsonPrimitive?.contentOrNull ?: "action failed"
+        } else {
+            null
+        }
+    }.getOrNull()
 
 /**
  * Builds the `/actions/:itemId/:actionId` path with each id percent-encoded
