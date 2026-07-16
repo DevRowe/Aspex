@@ -3,7 +3,7 @@ import type { ActionResult } from "@aspex/schema";
 import { Bus } from "../src/bus";
 import { enforceOwnership } from "../src/engine/attention";
 import { type ServerDeps, buildApp } from "../src/http/server";
-import { createStateStream } from "../src/http/sse";
+import { createSharedFrameSource, createStateStream } from "../src/http/sse";
 import { openDb } from "../src/store/db";
 import { ItemStore } from "../src/store/itemStore";
 import { WorldModel } from "../src/world/worldModel";
@@ -276,6 +276,54 @@ describe("hub HTTP server", () => {
     await reader.cancel();
 
     expect(unsubscribed).toBe(true);
+  });
+
+  test("a frame sent to a dead stream is contained instead of thrown", async () => {
+    let send: ((frame: string) => void) | undefined;
+    const stream = createStateStream({
+      snapshot: () => ({ ok: true }),
+      subscribe: (sendFrame) => {
+        send = sendFrame;
+        return () => {};
+      },
+    });
+    const reader = stream.getReader();
+
+    await reader.read();
+    await reader.cancel();
+
+    // The bus emitter (and the ping timer) call this exact function; a dead
+    // client throwing here would fail POST /signals and skip later listeners.
+    expect(() => send?.("event: state\ndata: {}\n\n")).not.toThrow();
+  });
+
+  test("shared frame source encodes once per event for all subscribers", () => {
+    let encodes = 0;
+    let notify: (() => void) | undefined;
+    const subscribe = createSharedFrameSource({
+      encode: () => {
+        encodes += 1;
+        return "event: state\ndata: {}\n\n";
+      },
+      attach: (onEvent) => {
+        notify = onEvent;
+        return () => {
+          notify = undefined;
+        };
+      },
+    });
+    const received: string[] = [];
+    const unsubscribeA = subscribe((frame) => received.push(`a:${frame}`));
+    const unsubscribeB = subscribe((frame) => received.push(`b:${frame}`));
+
+    notify?.();
+
+    expect(encodes).toBe(1);
+    expect(received).toHaveLength(2);
+
+    unsubscribeA();
+    unsubscribeB();
+    expect(notify).toBeUndefined();
   });
 });
 

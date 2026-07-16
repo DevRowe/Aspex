@@ -30,6 +30,7 @@ export class LabScene {
   private readonly root = new THREE.Group();
   private readonly targetMeshes: THREE.Mesh[] = [];
   private readonly controllers: THREE.Group[] = [];
+  private readonly controllerConnected: boolean[] = [];
   private readonly raycaster = new THREE.Raycaster();
   private readonly pointer = new THREE.Vector2();
   private readonly reticle: THREE.Mesh;
@@ -74,12 +75,23 @@ export class LabScene {
 
     for (let index = 0; index < 4; index += 1) {
       const controller = this.renderer.xr.getController(index);
+      // Controller groups exist (visible, at the identity transform) before
+      // any input source connects; on-device the unused slots would raycast
+      // from the origin straight through the panel and pin focus, so only
+      // connected controllers may drive the focus ray.
+      controller.addEventListener("connected", () => {
+        this.controllerConnected[index] = true;
+      });
+      controller.addEventListener("disconnected", () => {
+        this.controllerConnected[index] = false;
+      });
       controller.addEventListener("selectstart", () =>
         this.input.selectStart(),
       );
       controller.addEventListener("select", () => this.input.select());
       controller.addEventListener("selectend", () => this.input.selectEnd());
       this.controllers.push(controller);
+      this.controllerConnected.push(false);
       this.scene.add(controller);
     }
 
@@ -404,8 +416,8 @@ export class LabScene {
   private renderFrame(): void {
     if (this.renderer.xr.isPresenting) {
       let hit = false;
-      for (const controller of this.controllers) {
-        if (!controller.visible) {
+      for (const [index, controller] of this.controllers.entries()) {
+        if (this.controllerConnected[index] !== true || !controller.visible) {
           continue;
         }
         controller.updateMatrixWorld(true);

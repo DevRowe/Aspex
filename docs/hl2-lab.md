@@ -66,6 +66,10 @@ If the installed Tailscale CLI uses a newer Serve syntax, reproduce the same two
 
 ## Short wear-test checklist
 
+- Confirm primary content sits near 2 m, inside the 1.25-5 m comfort zone, fading out below 40 cm and clipping at 30 cm, with no depth animation on ambient cards.
+- Confirm resting content sits 0-35 degrees below the horizon and the carousel fans out horizontally, not vertically.
+- Confirm card text subtends at least 0.65-0.8 degrees of visual angle at 2 m and stays legible against a bright backdrop such as a window.
+- Confirm one card resolves in a single 2-3 second glance: severity, project, and one action is a full card.
 - Confirm the card is centered and completely visible in the useful waveguide FOV without head chasing.
 - Confirm gaze and articulated-hand pinch focus every control without resizing or shifting the card.
 - Hold push-to-talk, speak a safe status query, release, and confirm permission, recording, transcribing, and read-back states are legible.

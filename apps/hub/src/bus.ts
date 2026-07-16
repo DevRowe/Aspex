@@ -9,6 +9,13 @@ export type HubEvents = {
 export class Bus {
   private emitter = new EventEmitter();
 
+  constructor() {
+    // Each SSE client used to hold its own listener; the shared frame source
+    // keeps world:changed at one, but preview subscriptions are still
+    // per-client, so the default cap of 10 would warn under normal load.
+    this.emitter.setMaxListeners(0);
+  }
+
   on<K extends keyof HubEvents>(k: K, fn: (e: HubEvents[K]) => void): void {
     this.emitter.on(k, fn);
   }
