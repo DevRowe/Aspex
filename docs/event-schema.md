@@ -431,6 +431,9 @@ referent-less verbs; item-scoped direction verbs ride the existing
 Retried intents with an already-processed `intentId` replay the cached ack
 from the Hub's bounded `IntentLedger` LRU. Failures are not cached, so
 transient errors stay retryable. Invalid bodies return HTTP 400.
+Error bodies on these routes, the optional `Idempotency-Key` header, and the
+`Idempotency-Replayed` marker follow the protocol v1.1 conventions in
+[hub-api.md](hub-api.md).
 Concurrent requests with the same `intentId` (on `/intents` or `/actions`)
 also dedupe: the later request awaits the in-flight dispatch and receives its
 outcome instead of dispatching again.
@@ -467,9 +470,10 @@ identifier.
 | `context` | yes | JSON-encoded `VoiceContext`. |
 | `intentId` | no | Filename-safe client id carried into a consequential action or referent-less direction intent for end-to-end deduplication. |
 
-The Hub returns `503 { "error": "voice not configured" }` when voice is disabled
-or no Voice gateway is configured. Missing audio, missing context, malformed
-context JSON, or invalid `VoiceContext` return HTTP 400 with a `message`.
+The Hub returns HTTP 503 when voice is disabled or no Voice gateway is
+configured. Missing audio, missing context, malformed context JSON, or invalid
+`VoiceContext` return HTTP 400. Error bodies are problem+json per
+[hub-api.md](hub-api.md) (the 503 keeps its legacy `error` extension).
 
 On a valid request the HTTP route calls the Voice gateway and returns
 `VoiceResult` JSON. Gateway no-match cases still return HTTP 200 with
