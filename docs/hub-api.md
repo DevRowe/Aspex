@@ -71,13 +71,12 @@ Protocol v1.1 aligns the surface with the IETF `Idempotency-Key` header draft wh
 Frames on the stream:
 
 - `state` - the full ranked snapshot (same shape as `GET /state`); sent on connect and on every world change.
-- `preview` - a Preview lifecycle event (only when the Preview Deck is enabled).
 - `ping` - keepalive every 15 s, `data: {}`; carries no `id:` and is not replayable. Ignore it (or use it for liveness).
 - Unknown event types may appear in future versions; ignore them.
 
 Resumability (the same mechanism MCP's Streamable HTTP transport builds on):
 
-- Every `state`/`preview` event carries a monotonically increasing `id:`.
+- Every `state` event carries a monotonically increasing `id:`.
 - The server sends `retry: 3000` on connect; honor it for reconnect backoff.
 - On reconnect, send `Last-Event-ID` (native `EventSource` does this automatically).
   If the id is still inside the Hub's bounded replay ring (256 events), you receive exactly the missed events and no snapshot; otherwise you receive a fresh `state` snapshot stamped with the current id.

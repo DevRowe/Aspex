@@ -129,13 +129,14 @@ export function buildApp(deps: ServerDeps): Hono {
   // Framework fallbacks speak the same problem+json contract as every
   // hand-written error body (docs/hub-api.md).
   app.notFound((c) => problem(c, { status: 404, title: "Not Found" }));
-  app.onError((error, c) =>
-    problem(c, {
+  app.onError((error, c) => {
+    console.error(error);
+    return problem(c, {
       status: 500,
       title: "Internal Server Error",
       detail: error instanceof Error ? error.message : "Internal Server Error",
-    }),
-  );
+    });
+  });
 
   app.use(
     "*",
