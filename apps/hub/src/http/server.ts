@@ -27,7 +27,7 @@ import type { VoiceGateway } from "../voice/gateway";
 import type { WorldModel } from "../world/worldModel";
 import { hubAuth } from "./auth";
 import { IntentLedger, type LedgerEntry } from "./intentLedger";
-import { registerPreviewRoutes, subscribePreviewEvents } from "./preview";
+import { registerPreviewRoutes } from "./preview";
 import {
   createSharedFrameSource,
   createStateStream,
@@ -149,7 +149,6 @@ export function buildApp(deps: ServerDeps): Hono {
 
   if (previewDeps !== undefined) {
     registerPreviewRoutes(app, previewDeps);
-    subscribePreviewEvents(previewDeps);
   }
 
   app.get("/state", (c) => c.json(stateSnapshot(deps)));

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ActionResult, Preview, PreviewSpec } from "@aspex/schema";
 import { Bus } from "../../src/bus";
+import { subscribePreviewEvents } from "../../src/http/preview";
 import { type ServerDeps, buildApp } from "../../src/http/server";
 import type { PreviewBroker } from "../../src/preview/broker";
 import type { PreviewRegistry } from "../../src/preview/registry";
@@ -238,7 +239,7 @@ describe("hub preview HTTP routes", () => {
 
   test("GET /stream publishes preview events on the existing SSE connection", async () => {
     const broker = new FakeBroker([readyPreview]);
-    const { app } = openServer({ broker });
+    const { app, unsubscribe } = openServer({ broker });
     const response = await app.fetch(new Request("http://hub.test/stream"));
     const reader = response.body?.getReader();
 
@@ -249,6 +250,7 @@ describe("hub preview HTTP routes", () => {
     broker.emitChange(readyPreview);
     const preview = await reader?.read();
     await reader?.cancel();
+    unsubscribe();
 
     expect(decode(initial?.value)).toContain("event: state\ndata:");
     expect(decode(preview?.value)).toContain("event: preview\ndata:");
@@ -266,9 +268,10 @@ function openServer(
   const broker = options.broker ?? new FakeBroker([readyPreview]);
   const registry = options.registry ?? new FakeRegistry([trustedSpec]);
   const previewsEnabled = options.previewsEnabled ?? true;
+  const bus = new Bus();
   const app = buildApp({
     worldModel: { snapshot: () => [] } as unknown as ServerDeps["worldModel"],
-    bus: new Bus(),
+    bus,
     cap: 7,
     version: "test",
     actionMeta: () => ({ requiresConfirmation: false }),
@@ -279,8 +282,11 @@ function openServer(
       registry,
     },
   });
+  const unsubscribe = previewsEnabled
+    ? subscribePreviewEvents({ broker, registry, bus })
+    : () => {};
 
-  return { app, broker, registry };
+  return { app, broker, registry, unsubscribe };
 }
 
 function jsonRequest(url: string, body: unknown): Request {

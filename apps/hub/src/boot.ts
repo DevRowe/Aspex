@@ -16,6 +16,7 @@ import { type AspexConfig, resolvedLivenessConfig } from "./config";
 import { enforceOwnership, rank } from "./engine/attention";
 import { LivenessTicker, livenessAt, nextStaleAfter } from "./engine/liveness";
 import { IntentLedger } from "./http/intentLedger";
+import { subscribePreviewEvents } from "./http/preview";
 import { type ServerDeps, buildApp } from "./http/server";
 import { createPreviewBroker } from "./preview/broker";
 import type { PreviewEngine } from "./preview/engine";
@@ -119,9 +120,8 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
     );
   }
 
-  if (cfg.ntfy !== undefined) {
-    new NtfyNotifier(cfg.ntfy, bus);
-  }
+  const ntfyNotifier =
+    cfg.ntfy !== undefined ? new NtfyNotifier(cfg.ntfy, bus) : undefined;
 
   // Route actions by item source: orchestrator:* items go to the
   // orchestrator registry, everything else to the adapter registry. Voice and
@@ -248,6 +248,7 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
   });
   let previewBroker: ReturnType<typeof createPreviewBroker> | undefined;
   let previewSweep: ReturnType<typeof setInterval> | undefined;
+  let previewEventsUnsubscribe: (() => void) | undefined;
   const log = options.log ?? console;
 
   return {
@@ -264,12 +265,17 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
         log,
       });
       previewBroker = previewDeps?.broker;
-      if (previewBroker !== undefined) {
-        const broker = previewBroker;
+      if (previewDeps !== undefined) {
+        const broker = previewDeps.broker;
         previewSweep = setInterval(() => {
           void broker.sweep();
         }, PREVIEW_SWEEP_INTERVAL_MS);
         previewSweep.unref?.();
+        previewEventsUnsubscribe = subscribePreviewEvents({
+          broker: previewDeps.broker,
+          registry: previewDeps.registry,
+          bus,
+        });
       }
       app = buildApp({
         ...appDeps,
@@ -291,6 +297,9 @@ export function buildHub(cfg: AspexConfig, options: BuildHubOptions = {}) {
         clearInterval(previewSweep);
         previewSweep = undefined;
       }
+      previewEventsUnsubscribe?.();
+      previewEventsUnsubscribe = undefined;
+      ntfyNotifier?.detach();
       liveness.stop();
       await orchestrators.stopAll();
       await registry.stopAll();
