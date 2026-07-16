@@ -11,142 +11,535 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { isRecord } from "@aspex/schema";
-import type { Severity } from "@aspex/schema";
+import { z } from "zod";
 import type { LivenessConfig } from "./engine/liveness";
 
-export interface AspexConfig {
-  hubPort: number;
+export function expandHome(path: string): string {
+  if (path === "~") {
+    return homedir();
+  }
+
+  if (path.startsWith("~/") || path.startsWith("~\\")) {
+    return resolve(homedir(), path.slice(2));
+  }
+
+  return path;
+}
+
+// --- schema primitives -----------------------------------------------------
+// Error messages are written without their config path; configParseError
+// prefixes each issue with its dotted path (and the matching env var, if any),
+// e.g. "intent.timeoutMs must be a positive integer (env ...)".
+
+const positiveInt = (message = "must be a positive integer") =>
+  z.number({ error: message }).int(message).positive(message);
+
+const configBoolean = z.boolean({ error: "must be a boolean" });
+
+const requiredString = (message: string) =>
+  z.string({ error: message }).refine((value) => value.trim() !== "", message);
+
+// Reduce a URL to its base form: no trailing slash, query, or fragment.
+function baseUrlOrUndefined(endpoint: string): string | undefined {
+  try {
+    const url = new URL(endpoint);
+    url.pathname = url.pathname.replace(/\/+$/, "") || "/";
+    url.hash = "";
+    url.search = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return undefined;
+  }
+}
+
+// Append the voice contract path (/transcribe or /speak) to a base URL,
+// keeping it when the endpoint already ends with it.
+function contractUrlOrUndefined(
+  endpoint: string,
+  contractPath: "/transcribe" | "/speak",
+): string | undefined {
+  try {
+    const url = new URL(endpoint);
+    const trimmedPath = url.pathname.replace(/\/+$/, "");
+
+    if (trimmedPath === "" || trimmedPath === "/") {
+      url.pathname = contractPath;
+    } else if (trimmedPath.endsWith(contractPath)) {
+      url.pathname = trimmedPath;
+    } else {
+      url.pathname = `${trimmedPath}${contractPath}`;
+    }
+
+    url.hash = "";
+    url.search = "";
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+const endpointList = (normalize: (endpoint: string) => string | undefined) =>
+  z
+    .array(z.unknown(), { error: "must be an array" })
+    .transform((endpoints, ctx) => {
+      const normalized: string[] = [];
+
+      for (const endpoint of endpoints) {
+        if (typeof endpoint !== "string" || endpoint.trim() === "") {
+          ctx.addIssue({
+            code: "custom",
+            message: "must contain non-empty strings",
+          });
+          return z.NEVER;
+        }
+
+        const url = normalize(endpoint);
+
+        if (url === undefined) {
+          ctx.addIssue({ code: "custom", message: "must contain valid URLs" });
+          return z.NEVER;
+        }
+
+        normalized.push(url);
+      }
+
+      return normalized;
+    });
+
+// --- section schemas -------------------------------------------------------
+
+const voiceSchema = z
+  .object({
+    enabled: configBoolean.default(false),
+    stt: z
+      .object({
+        endpoints: endpointList((endpoint) =>
+          contractUrlOrUndefined(endpoint, "/transcribe"),
+        ).default(["http://127.0.0.1:8901/transcribe"]),
+        timeoutMs: positiveInt().default(5000),
+      })
+      .prefault({}),
+    tts: z
+      .object({
+        endpoint: requiredString("must be a non-empty string when set")
+          .transform((endpoint, ctx) => {
+            const url = contractUrlOrUndefined(endpoint, "/speak");
+
+            if (url === undefined) {
+              ctx.addIssue({
+                code: "custom",
+                message: "must contain valid URLs",
+              });
+              return z.NEVER;
+            }
+
+            return url;
+          })
+          .optional(),
+      })
+      .prefault({}),
+    confidenceThreshold: z
+      .number({ error: "must be between 0 and 1" })
+      .min(0, "must be between 0 and 1")
+      .max(1, "must be between 0 and 1")
+      .default(0.6),
+    confirmTtlMs: positiveInt().default(8000),
+    pttKey: requiredString("must be a non-empty string").default("Space"),
+    mock: configBoolean.optional(),
+  })
+  .superRefine((voice, ctx) => {
+    if (
+      voice.enabled &&
+      voice.mock !== true &&
+      voice.stt.endpoints.length === 0
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["stt", "endpoints"],
+        message: "must contain at least one endpoint when voice is enabled",
+      });
+    }
+  })
+  .prefault({});
+
+const intentSchema = z
+  .object({
+    enabled: configBoolean.default(false),
+    endpoints: endpointList(baseUrlOrUndefined).default([
+      "http://127.0.0.1:11434",
+    ]),
+    model: requiredString("must be a non-empty string")
+      .transform((model) => model.trim())
+      .default("llama3.1"),
+    timeoutMs: positiveInt().default(8000),
+    elevateConfirm: configBoolean.default(true),
+    mock: configBoolean.optional(),
+  })
+  .superRefine((intent, ctx) => {
+    if (
+      intent.enabled &&
+      intent.mock !== true &&
+      intent.endpoints.length === 0
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["endpoints"],
+        message: "must contain at least one endpoint when intent is enabled",
+      });
+    }
+  })
+  .prefault({});
+
+const adaptersSchema = z
+  .object({
+    codex: z.object({ enabled: configBoolean.default(false) }).prefault({}),
+    opencode: z
+      .object({
+        enabled: configBoolean.default(false),
+        serverUrl: z.string().default("http://127.0.0.1:4096"),
+        directory: requiredString("must be a non-empty string when set")
+          .transform((directory) => directory.trim())
+          .optional(),
+      })
+      .prefault({})
+      // The serverUrl is only contractual while the adapter is enabled; a
+      // disabled section passes through untouched.
+      .transform((opencode, ctx) => {
+        if (!opencode.enabled) {
+          return opencode;
+        }
+
+        const trimmed = opencode.serverUrl.trim();
+        const url = trimmed === "" ? undefined : baseUrlOrUndefined(trimmed);
+
+        if (url === undefined) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["serverUrl"],
+            message: "must be a non-empty valid URL when opencode is enabled",
+          });
+          return z.NEVER;
+        }
+
+        return { ...opencode, serverUrl: url };
+      }),
+    cursor: z
+      .object({
+        enabled: configBoolean.default(false),
+        secret: z
+          .string()
+          .transform((secret) => secret.trim())
+          .optional(),
+      })
+      .prefault({})
+      .superRefine((cursor, ctx) => {
+        if (
+          cursor.enabled &&
+          (cursor.secret === undefined || cursor.secret === "")
+        ) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["secret"],
+            message: "must be a non-empty string when cursor is enabled",
+          });
+        }
+      }),
+  })
+  .prefault({});
+
+const orchestratorsSchema = z
+  .object({
+    giles: z
+      .object({
+        enabled: configBoolean.default(false),
+        // The Giles home directory the adapter reads (and whose designated
+        // state/aspex-inbox it delivers intents into).
+        home: requiredString("must be a non-empty path")
+          .transform((home) => expandHome(home.trim()))
+          .prefault("~/giles"),
+        pollIntervalMs: positiveInt(
+          "must be a positive integer when set",
+        ).optional(),
+      })
+      .prefault({}),
+  })
+  .prefault({});
+
+const livenessSchema = z
+  .object({
+    pollGraceMs: positiveInt().default(90_000),
+    heartbeatGraceMs: positiveInt().default(120_000),
+    quietAfterMs: positiveInt().default(30_000),
+    staleAfterMs: positiveInt().default(90_000),
+    lostAfterMs: positiveInt().default(180_000),
+  })
+  .prefault({});
+
+export const aspexConfigSchema = z.object({
+  hubPort: positiveInt().default(4317),
   // Interface the Hub HTTP server binds to (ADR-0023 tailnet model): loopback
   // by default; set to the dev box's tailnet address to serve enrolled
   // devices (the glasses). Never a public interface by default.
-  hubBind: string;
+  hubBind: requiredString("must be a non-empty host or address")
+    .transform((bind) => bind.trim())
+    .default("127.0.0.1"),
   // One extra exact origin allowed by CORS, e.g. the XR lab client's
   // origin, alongside the built-in tauri://localhost and http://localhost:*.
-  corsOrigin?: string;
-  dbPath: string;
-  needsMeCap: number;
-  pollIntervalMs: number;
-  auth?: { token: string };
-  github?: { token: string; allowlist?: string[] };
-  ntfy?: { server?: string; topic: string; minSeverity?: "medium" | "high" };
-  liveness?: Partial<LivenessConfig>;
-  voice?: VoiceConfig;
-  intent?: IntentConfig;
-  adapters?: AdaptersConfig;
-  orchestrators?: OrchestratorsConfig;
-  mock?: boolean;
-}
+  corsOrigin: z
+    .string({ error: "must be a non-empty origin when set" })
+    .transform((origin, ctx) => {
+      if (origin.trim() === "") {
+        ctx.addIssue({
+          code: "custom",
+          message: "must be a non-empty origin when set",
+        });
+        return z.NEVER;
+      }
 
-export interface OrchestratorsConfig {
-  giles?: {
-    enabled: boolean;
-    // The Giles home directory the adapter reads (and whose designated
-    // state/aspex-inbox it delivers intents into).
-    home: string;
-    pollIntervalMs?: number;
-  };
-}
+      try {
+        return new URL(origin.trim()).origin;
+      } catch {
+        ctx.addIssue({
+          code: "custom",
+          message: "must be a valid origin, e.g. http://hl2.tailnet:8080",
+        });
+        return z.NEVER;
+      }
+    })
+    .optional(),
+  dbPath: requiredString("must be a non-empty string")
+    .transform(expandHome)
+    .prefault("~/.aspex/aspex.sqlite"),
+  needsMeCap: positiveInt().default(7),
+  pollIntervalMs: positiveInt().default(60_000),
+  auth: z
+    .object({
+      token: requiredString(
+        "must be a non-empty string when auth is configured",
+      ),
+    })
+    .optional(),
+  github: z
+    .object({
+      token: requiredString(
+        "must be a non-empty string when github is configured",
+      ),
+      allowlist: z.array(z.string()).optional(),
+    })
+    .optional(),
+  ntfy: z
+    .object({
+      server: z.string().optional(),
+      topic: requiredString(
+        "must be a non-empty string when ntfy is configured",
+      ),
+      minSeverity: z
+        .enum(["medium", "high"], { error: "must be medium or high" })
+        .optional(),
+    })
+    .optional(),
+  liveness: livenessSchema,
+  voice: voiceSchema,
+  intent: intentSchema,
+  adapters: adaptersSchema,
+  orchestrators: orchestratorsSchema,
+  mock: configBoolean.optional(),
+});
 
-export interface VoiceConfig {
-  enabled: boolean;
-  stt: { endpoints: string[]; timeoutMs: number };
-  tts: { endpoint?: string };
-  confidenceThreshold: number;
-  confirmTtlMs: number;
-  pttKey: string;
-  mock?: boolean;
-}
+export type AspexConfig = z.infer<typeof aspexConfigSchema>;
+export type VoiceConfig = AspexConfig["voice"];
+export type IntentConfig = AspexConfig["intent"];
+export type AdaptersConfig = AspexConfig["adapters"];
+export type OrchestratorsConfig = AspexConfig["orchestrators"];
 
-export interface IntentConfig {
-  enabled: boolean;
-  endpoints: string[];
-  model: string;
-  timeoutMs: number;
-  elevateConfirm: boolean;
-  mock?: boolean;
-}
-
-export interface AdaptersConfig {
-  codex?: { enabled: boolean };
-  opencode?: { enabled: boolean; serverUrl: string; directory?: string };
-  cursor?: { enabled: boolean; secret?: string };
-}
-
-type ConfigFile = Partial<
-  Omit<
-    AspexConfig,
-    "auth" | "github" | "ntfy" | "liveness" | "voice" | "intent" | "adapters"
-  >
-> & {
-  auth?: Partial<AspexConfig["auth"]>;
-  github?: Partial<AspexConfig["github"]>;
-  ntfy?: Partial<AspexConfig["ntfy"]>;
-  liveness?: Partial<LivenessConfig>;
-  voice?: Partial<Omit<VoiceConfig, "stt" | "tts">> & {
-    stt?: Partial<VoiceConfig["stt"]>;
-    tts?: Partial<VoiceConfig["tts"]>;
-  };
-  intent?: Partial<IntentConfig>;
-  adapters?: {
-    codex?: Partial<NonNullable<AdaptersConfig["codex"]>>;
-    opencode?: Partial<NonNullable<AdaptersConfig["opencode"]>>;
-    cursor?: Partial<NonNullable<AdaptersConfig["cursor"]>>;
-  };
-  orchestrators?: {
-    giles?: Partial<NonNullable<OrchestratorsConfig["giles"]>>;
-  };
-};
-
-const DEFAULT_VOICE_CONFIG: VoiceConfig = {
-  enabled: false,
-  stt: {
-    endpoints: ["http://127.0.0.1:8901/transcribe"],
-    timeoutMs: 5000,
-  },
-  tts: {},
-  confidenceThreshold: 0.6,
-  confirmTtlMs: 8000,
-  pttKey: "Space",
-};
-
-const DEFAULT_INTENT_CONFIG: IntentConfig = {
-  enabled: false,
-  endpoints: ["http://127.0.0.1:11434"],
-  model: "llama3.1",
-  timeoutMs: 8000,
-  elevateConfirm: true,
-};
-
-const DEFAULT_ORCHESTRATORS_CONFIG: OrchestratorsConfig = {
-  giles: { enabled: false, home: "~/giles" },
-};
-
-const DEFAULT_ADAPTERS_CONFIG: AdaptersConfig = {
-  codex: { enabled: false },
-  opencode: { enabled: false, serverUrl: "http://127.0.0.1:4096" },
-  cursor: { enabled: false },
-};
-
-export const DEFAULT_CONFIG: AspexConfig = {
-  hubPort: 4317,
-  hubBind: "127.0.0.1",
-  dbPath: "~/.aspex/aspex.sqlite",
-  needsMeCap: 7,
-  pollIntervalMs: 60_000,
-  voice: DEFAULT_VOICE_CONFIG,
-  intent: DEFAULT_INTENT_CONFIG,
-  adapters: DEFAULT_ADAPTERS_CONFIG,
-  orchestrators: DEFAULT_ORCHESTRATORS_CONFIG,
-  liveness: {
-    pollGraceMs: 90_000,
-    heartbeatGraceMs: 120_000,
-    quietAfterMs: 30_000,
-    staleAfterMs: 90_000,
-    lostAfterMs: 180_000,
-  },
-};
+export const DEFAULT_CONFIG: AspexConfig = aspexConfigSchema.parse({});
 
 export const DEFAULT_CONFIG_PATH = "~/.aspex/config.json";
+
+// --- environment overrides -------------------------------------------------
+// Each env var maps to one dotted config path plus a coercion schema; the
+// coerced value is layered onto the parsed config file before the final
+// schema.parse. `requiresSection` marks partials that must not conjure an
+// optional section on their own (the section's primary var, listed first,
+// creates it).
+
+const envString = z
+  .string()
+  .transform((value) => value.trim())
+  .refine((value) => value !== "", "must be a non-empty string");
+
+const envPositiveInt = z
+  .string()
+  .transform(Number)
+  .refine(
+    (value) => Number.isInteger(value) && value > 0,
+    "must be a positive integer",
+  );
+
+const envNumber = z
+  .string()
+  .transform(Number)
+  .refine((value) => Number.isFinite(value), "must be a number");
+
+const envBoolean = z
+  .string()
+  .transform((value) => value.trim().toLowerCase())
+  .refine(
+    (value) => ["true", "1", "false", "0"].includes(value),
+    "must be a boolean (true, false, 1, or 0)",
+  )
+  .transform((value) => value === "true" || value === "1");
+
+const envCsv = z.string().transform((value) =>
+  value
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0),
+);
+
+const envSeverity = z.enum(["medium", "high"], {
+  error: "must be medium or high",
+});
+
+// [env var, dotted config path, coercion, section that must already exist]
+type EnvOverride = [string, string, z.ZodType, ("github" | "ntfy")?];
+
+// biome-ignore format: keep one env var per line
+const ENV_OVERRIDES: EnvOverride[] = [
+  ["ASPEX_HUB_PORT", "hubPort", envPositiveInt],
+  ["ASPEX_HUB_BIND", "hubBind", envString],
+  ["ASPEX_HUB_CORS_ORIGIN", "corsOrigin", envString],
+  ["ASPEX_HUB_TOKEN", "auth.token", envString],
+  ["ASPEX_DB_PATH", "dbPath", envString],
+  ["ASPEX_NEEDS_ME_CAP", "needsMeCap", envPositiveInt],
+  ["ASPEX_POLL_INTERVAL_MS", "pollIntervalMs", envPositiveInt],
+  ["ASPEX_MOCK", "mock", envBoolean],
+  ["ASPEX_GITHUB_TOKEN", "github.token", envString],
+  ["ASPEX_GITHUB_ALLOWLIST", "github.allowlist", envCsv, "github"],
+  ["ASPEX_NTFY_TOPIC", "ntfy.topic", envString],
+  ["ASPEX_NTFY_SERVER", "ntfy.server", envString, "ntfy"],
+  ["ASPEX_NTFY_MIN_SEVERITY", "ntfy.minSeverity", envSeverity, "ntfy"],
+  ["ASPEX_VOICE_ENABLED", "voice.enabled", envBoolean],
+  ["ASPEX_VOICE_STT", "voice.stt.endpoints", envCsv],
+  ["ASPEX_VOICE_TTS", "voice.tts.endpoint", envString],
+  ["ASPEX_VOICE_CONFIDENCE", "voice.confidenceThreshold", envNumber],
+  ["ASPEX_VOICE_MOCK", "voice.mock", envBoolean],
+  ["ASPEX_VOICE_PTT_KEY", "voice.pttKey", envString],
+  ["ASPEX_INTENT_ENABLED", "intent.enabled", envBoolean],
+  ["ASPEX_INTENT_ENDPOINTS", "intent.endpoints", envCsv],
+  ["ASPEX_INTENT_MODEL", "intent.model", envString],
+  ["ASPEX_INTENT_MOCK", "intent.mock", envBoolean],
+  ["ASPEX_CODEX_ENABLED", "adapters.codex.enabled", envBoolean],
+  ["ASPEX_OPENCODE_ENABLED", "adapters.opencode.enabled", envBoolean],
+  ["ASPEX_OPENCODE_SERVER_URL", "adapters.opencode.serverUrl", envString],
+  ["ASPEX_OPENCODE_DIRECTORY", "adapters.opencode.directory", envString],
+  ["ASPEX_CURSOR_ENABLED", "adapters.cursor.enabled", envBoolean],
+  ["ASPEX_CURSOR_SECRET", "adapters.cursor.secret", envString],
+  ["ASPEX_GILES_ENABLED", "orchestrators.giles.enabled", envBoolean],
+  ["ASPEX_GILES_HOME", "orchestrators.giles.home", envString],
+  ["ASPEX_GILES_POLL_INTERVAL_MS", "orchestrators.giles.pollIntervalMs", envPositiveInt],
+  ["ASPEX_LIVENESS_POLL_GRACE_MS", "liveness.pollGraceMs", envPositiveInt],
+  ["ASPEX_LIVENESS_HEARTBEAT_GRACE_MS", "liveness.heartbeatGraceMs", envPositiveInt],
+  ["ASPEX_LIVENESS_QUIET_AFTER_MS", "liveness.quietAfterMs", envPositiveInt],
+  ["ASPEX_LIVENESS_STALE_AFTER_MS", "liveness.staleAfterMs", envPositiveInt],
+  ["ASPEX_LIVENESS_LOST_AFTER_MS", "liveness.lostAfterMs", envPositiveInt],
+];
+
+const ENV_BY_PATH = new Map(ENV_OVERRIDES.map(([name, path]) => [path, name]));
+
+function applyEnvOverrides(
+  config: Record<string, unknown>,
+  env: NodeJS.ProcessEnv,
+): void {
+  for (const [name, path, schema, requiresSection] of ENV_OVERRIDES) {
+    const raw = env[name];
+
+    if (raw === undefined) {
+      continue;
+    }
+
+    const parsed = schema.safeParse(raw);
+
+    if (!parsed.success) {
+      throw new Error(
+        `${name} ${parsed.error.issues[0]?.message ?? "is invalid"}`,
+      );
+    }
+
+    if (
+      requiresSection !== undefined &&
+      config[requiresSection] === undefined
+    ) {
+      continue;
+    }
+
+    setConfigPath(config, path, parsed.data);
+  }
+}
+
+function setConfigPath(
+  target: Record<string, unknown>,
+  path: string,
+  value: unknown,
+): void {
+  const keys = path.split(".");
+  const last = keys.pop();
+
+  if (last === undefined) {
+    return;
+  }
+
+  let node = target;
+
+  for (const key of keys) {
+    const next = node[key];
+
+    if (next === undefined) {
+      const created: Record<string, unknown> = {};
+      node[key] = created;
+      node = created;
+    } else if (isRecord(next)) {
+      node = next;
+    } else {
+      // A malformed section in the file; leave it for the schema to report.
+      return;
+    }
+  }
+
+  node[last] = value;
+}
+
+// A global mock: true turns the voice and intent services into mocks unless
+// the section pins its own mock value.
+function inheritGlobalMock(config: Record<string, unknown>): void {
+  if (config.mock !== true) {
+    return;
+  }
+
+  for (const section of ["voice", "intent"]) {
+    const current = config[section];
+
+    if (current === undefined) {
+      config[section] = { mock: true };
+    } else if (isRecord(current) && current.mock === undefined) {
+      current.mock = true;
+    }
+  }
+}
+
+function configParseError(error: z.ZodError): Error {
+  const lines = error.issues.map((issue) => {
+    const path = issue.path.join(".");
+    const envName = ENV_BY_PATH.get(path);
+    const source = envName === undefined ? "" : ` (env ${envName})`;
+    return path === ""
+      ? `${issue.message}${source}`
+      : `${path} ${issue.message}${source}`;
+  });
+  return new Error(`Invalid Aspex config: ${lines.join("; ")}`);
+}
+
+// --- loading ---------------------------------------------------------------
 
 export interface LoadConfigOptions {
   configPath?: string;
@@ -162,39 +555,49 @@ export async function loadConfig({
   mock,
 }: LoadConfigOptions = {}): Promise<AspexConfig> {
   const path = expandHome(configPath ?? defaultConfigPath);
-  const fromFile = await readConfigFile(path, configPath !== undefined);
-  const cfg = mergeConfig(DEFAULT_CONFIG, fromFile);
-  const withEnv = applyEnv(cfg, env);
+  const config = await readConfigFile(path, configPath !== undefined);
 
-  return normalizeConfig({
-    ...withEnv,
-    mock: mock ?? withEnv.mock,
-  });
-}
+  applyEnvOverrides(config, env);
 
-export function expandHome(path: string): string {
-  if (path === "~") {
-    return homedir();
+  if (mock !== undefined) {
+    config.mock = mock;
   }
 
-  if (path.startsWith("~/") || path.startsWith("~\\")) {
-    return resolve(homedir(), path.slice(2));
+  inheritGlobalMock(config);
+
+  const parsed = aspexConfigSchema.safeParse(config);
+
+  if (!parsed.success) {
+    throw configParseError(parsed.error);
   }
 
-  return path;
+  return parsed.data;
 }
 
 export function resolvedLivenessConfig(cfg: AspexConfig): LivenessConfig {
   return {
     ...DEFAULT_CONFIG.liveness,
     ...cfg.liveness,
-  } as LivenessConfig;
+  };
 }
 
 // The concrete filesystem path loadConfig reads, so a caller can persist a
 // generated token back into the same file.
 export function resolveConfigPath(configPath?: string): string {
   return expandHome(configPath ?? DEFAULT_CONFIG_PATH);
+}
+
+// The address local CLI clients (hook relay) dial to
+// reach the running Hub. A wildcard bind still serves loopback; a specific
+// bind serves only that address.
+export function hubClientHost(cfg: Pick<AspexConfig, "hubBind">): string {
+  const bind = cfg.hubBind;
+
+  if (bind === "0.0.0.0" || bind === "::" || bind === "*") {
+    return "127.0.0.1";
+  }
+
+  return bind.includes(":") ? `[${bind}]` : bind;
 }
 
 // Merge a generated auth token into the config file, preserving any other keys.
@@ -208,7 +611,7 @@ export async function persistHubToken(
   const existing = await readConfigFile(path, false);
   const next = {
     ...existing,
-    auth: { ...(existing.auth ?? {}), token },
+    auth: { ...(isRecord(existing.auth) ? existing.auth : {}), token },
   };
 
   const directory = dirname(path);
@@ -251,7 +654,7 @@ async function writeSecureConfigFile(
 async function readConfigFile(
   path: string,
   required: boolean,
-): Promise<ConfigFile> {
+): Promise<Record<string, unknown>> {
   if (!existsSync(path)) {
     if (required) {
       throw new Error(`Config file not found: ${path}`);
@@ -268,940 +671,4 @@ async function readConfigFile(
   }
 
   return parsed;
-}
-
-function mergeConfig(base: AspexConfig, override: ConfigFile): AspexConfig {
-  return {
-    ...base,
-    ...override,
-    auth: mergeOptionalObject(base.auth, override.auth),
-    github: mergeOptionalObject(base.github, override.github),
-    ntfy: mergeOptionalObject(base.ntfy, override.ntfy),
-    liveness: mergeOptionalObject(base.liveness, override.liveness),
-    voice: mergeVoiceConfig(base.voice, override.voice),
-    intent: mergeIntentConfig(base.intent, override.intent),
-    adapters: mergeAdaptersConfig(base.adapters, override.adapters),
-    orchestrators: mergeOrchestratorsConfig(
-      base.orchestrators,
-      override.orchestrators,
-    ),
-  };
-}
-
-function applyEnv(cfg: AspexConfig, env: NodeJS.ProcessEnv): AspexConfig {
-  const hubToken = optionalNonEmptyEnv(env.ASPEX_HUB_TOKEN, "ASPEX_HUB_TOKEN");
-  const githubToken = optionalNonEmptyEnv(
-    env.ASPEX_GITHUB_TOKEN,
-    "ASPEX_GITHUB_TOKEN",
-  );
-  const githubAllowlist = parseCsv(env.ASPEX_GITHUB_ALLOWLIST);
-  const ntfyTopic = optionalNonEmptyEnv(
-    env.ASPEX_NTFY_TOPIC,
-    "ASPEX_NTFY_TOPIC",
-  );
-  const ntfyServer = optionalNonEmptyEnv(
-    env.ASPEX_NTFY_SERVER,
-    "ASPEX_NTFY_SERVER",
-  );
-  const ntfyMinSeverity =
-    env.ASPEX_NTFY_MIN_SEVERITY !== undefined
-      ? parseNtfySeverity(env.ASPEX_NTFY_MIN_SEVERITY)
-      : undefined;
-  const voiceEnabled =
-    env.ASPEX_VOICE_ENABLED !== undefined
-      ? parseBoolean(
-          env.ASPEX_VOICE_ENABLED,
-          cfg.voice?.enabled,
-          "ASPEX_VOICE_ENABLED",
-        )
-      : undefined;
-  const voiceStt = parseCsv(env.ASPEX_VOICE_STT);
-  const voiceTts =
-    env.ASPEX_VOICE_TTS !== undefined
-      ? optionalNonEmptyEnv(env.ASPEX_VOICE_TTS, "ASPEX_VOICE_TTS")
-      : undefined;
-  const voiceConfidence =
-    env.ASPEX_VOICE_CONFIDENCE !== undefined
-      ? parseNumber(
-          env.ASPEX_VOICE_CONFIDENCE,
-          cfg.voice?.confidenceThreshold,
-          "ASPEX_VOICE_CONFIDENCE",
-        )
-      : undefined;
-  const voiceMock =
-    env.ASPEX_VOICE_MOCK !== undefined
-      ? parseBoolean(env.ASPEX_VOICE_MOCK, cfg.voice?.mock, "ASPEX_VOICE_MOCK")
-      : undefined;
-  const voicePttKey =
-    env.ASPEX_VOICE_PTT_KEY !== undefined
-      ? optionalNonEmptyEnv(env.ASPEX_VOICE_PTT_KEY, "ASPEX_VOICE_PTT_KEY")
-      : undefined;
-  const intentEnabled =
-    env.ASPEX_INTENT_ENABLED !== undefined
-      ? parseBoolean(
-          env.ASPEX_INTENT_ENABLED,
-          cfg.intent?.enabled,
-          "ASPEX_INTENT_ENABLED",
-        )
-      : undefined;
-  const intentEndpoints = parseCsv(env.ASPEX_INTENT_ENDPOINTS);
-  const intentModel =
-    env.ASPEX_INTENT_MODEL !== undefined
-      ? optionalNonEmptyEnv(env.ASPEX_INTENT_MODEL, "ASPEX_INTENT_MODEL")
-      : undefined;
-  const intentMock =
-    env.ASPEX_INTENT_MOCK !== undefined
-      ? parseBoolean(
-          env.ASPEX_INTENT_MOCK,
-          cfg.intent?.mock,
-          "ASPEX_INTENT_MOCK",
-        )
-      : undefined;
-  const codexEnabled =
-    env.ASPEX_CODEX_ENABLED !== undefined
-      ? parseBoolean(
-          env.ASPEX_CODEX_ENABLED,
-          cfg.adapters?.codex?.enabled,
-          "ASPEX_CODEX_ENABLED",
-        )
-      : undefined;
-  const opencodeEnabled =
-    env.ASPEX_OPENCODE_ENABLED !== undefined
-      ? parseBoolean(
-          env.ASPEX_OPENCODE_ENABLED,
-          cfg.adapters?.opencode?.enabled,
-          "ASPEX_OPENCODE_ENABLED",
-        )
-      : undefined;
-  const opencodeServerUrl =
-    env.ASPEX_OPENCODE_SERVER_URL !== undefined
-      ? optionalNonEmptyEnv(
-          env.ASPEX_OPENCODE_SERVER_URL,
-          "ASPEX_OPENCODE_SERVER_URL",
-        )
-      : undefined;
-  const opencodeDirectory =
-    env.ASPEX_OPENCODE_DIRECTORY !== undefined
-      ? optionalNonEmptyEnv(
-          env.ASPEX_OPENCODE_DIRECTORY,
-          "ASPEX_OPENCODE_DIRECTORY",
-        )
-      : undefined;
-  const cursorEnabled =
-    env.ASPEX_CURSOR_ENABLED !== undefined
-      ? parseBoolean(
-          env.ASPEX_CURSOR_ENABLED,
-          cfg.adapters?.cursor?.enabled,
-          "ASPEX_CURSOR_ENABLED",
-        )
-      : undefined;
-  const cursorSecret =
-    env.ASPEX_CURSOR_SECRET !== undefined
-      ? optionalNonEmptyEnv(env.ASPEX_CURSOR_SECRET, "ASPEX_CURSOR_SECRET")
-      : undefined;
-  const gilesEnabled =
-    env.ASPEX_GILES_ENABLED !== undefined
-      ? parseBoolean(
-          env.ASPEX_GILES_ENABLED,
-          cfg.orchestrators?.giles?.enabled,
-          "ASPEX_GILES_ENABLED",
-        )
-      : undefined;
-  const gilesHome =
-    env.ASPEX_GILES_HOME !== undefined
-      ? optionalNonEmptyEnv(env.ASPEX_GILES_HOME, "ASPEX_GILES_HOME")
-      : undefined;
-  const gilesPollIntervalMs =
-    env.ASPEX_GILES_POLL_INTERVAL_MS !== undefined
-      ? parseInteger(
-          env.ASPEX_GILES_POLL_INTERVAL_MS,
-          cfg.orchestrators?.giles?.pollIntervalMs,
-          "ASPEX_GILES_POLL_INTERVAL_MS",
-        )
-      : undefined;
-  const github =
-    githubToken !== undefined ||
-    (cfg.github !== undefined && githubAllowlist !== undefined)
-      ? {
-          ...(cfg.github ?? { token: githubToken ?? "" }),
-          ...(githubToken !== undefined ? { token: githubToken } : {}),
-          ...(githubAllowlist !== undefined
-            ? { allowlist: githubAllowlist }
-            : {}),
-        }
-      : cfg.github;
-  const ntfy =
-    ntfyTopic !== undefined ||
-    (cfg.ntfy !== undefined &&
-      (ntfyServer !== undefined || ntfyMinSeverity !== undefined))
-      ? {
-          ...(cfg.ntfy ?? { topic: ntfyTopic ?? "" }),
-          ...(ntfyServer !== undefined ? { server: ntfyServer } : {}),
-          ...(ntfyTopic !== undefined ? { topic: ntfyTopic } : {}),
-          ...(ntfyMinSeverity !== undefined
-            ? { minSeverity: ntfyMinSeverity }
-            : {}),
-        }
-      : cfg.ntfy;
-  const hasVoiceEnv =
-    voiceEnabled !== undefined ||
-    voiceStt !== undefined ||
-    voiceTts !== undefined ||
-    voiceConfidence !== undefined ||
-    voiceMock !== undefined ||
-    voicePttKey !== undefined;
-  const voiceBase = cfg.voice ?? DEFAULT_VOICE_CONFIG;
-  const voice = hasVoiceEnv
-    ? {
-        ...voiceBase,
-        ...(voiceEnabled !== undefined ? { enabled: voiceEnabled } : {}),
-        ...(voiceConfidence !== undefined
-          ? { confidenceThreshold: voiceConfidence }
-          : {}),
-        ...(voiceMock !== undefined ? { mock: voiceMock } : {}),
-        ...(voicePttKey !== undefined ? { pttKey: voicePttKey } : {}),
-        stt: {
-          ...voiceBase.stt,
-          ...(voiceStt !== undefined ? { endpoints: voiceStt } : {}),
-        },
-        tts: {
-          ...voiceBase.tts,
-          ...(voiceTts !== undefined ? { endpoint: voiceTts } : {}),
-        },
-      }
-    : cfg.voice;
-  const hasIntentEnv =
-    intentEnabled !== undefined ||
-    intentEndpoints !== undefined ||
-    intentModel !== undefined ||
-    intentMock !== undefined;
-  const intentBase = cfg.intent ?? DEFAULT_INTENT_CONFIG;
-  const intent = hasIntentEnv
-    ? {
-        ...intentBase,
-        ...(intentEnabled !== undefined ? { enabled: intentEnabled } : {}),
-        ...(intentEndpoints !== undefined
-          ? { endpoints: intentEndpoints }
-          : {}),
-        ...(intentModel !== undefined ? { model: intentModel } : {}),
-        ...(intentMock !== undefined ? { mock: intentMock } : {}),
-      }
-    : cfg.intent;
-  const hasAdaptersEnv =
-    codexEnabled !== undefined ||
-    opencodeEnabled !== undefined ||
-    opencodeServerUrl !== undefined ||
-    opencodeDirectory !== undefined ||
-    cursorEnabled !== undefined ||
-    cursorSecret !== undefined;
-  const adaptersBase = cfg.adapters ?? DEFAULT_ADAPTERS_CONFIG;
-  const adapters: AspexConfig["adapters"] = hasAdaptersEnv
-    ? {
-        ...adaptersBase,
-        codex: {
-          ...(adaptersBase.codex ?? { enabled: false }),
-          ...(codexEnabled !== undefined ? { enabled: codexEnabled } : {}),
-        },
-        opencode: {
-          ...(adaptersBase.opencode ?? {
-            enabled: false,
-            serverUrl: "http://127.0.0.1:4096",
-          }),
-          ...(opencodeEnabled !== undefined
-            ? { enabled: opencodeEnabled }
-            : {}),
-          ...(opencodeServerUrl !== undefined
-            ? { serverUrl: opencodeServerUrl }
-            : {}),
-          ...(opencodeDirectory !== undefined
-            ? { directory: opencodeDirectory }
-            : {}),
-        },
-        cursor: {
-          ...(adaptersBase.cursor ?? { enabled: false }),
-          ...(cursorEnabled !== undefined ? { enabled: cursorEnabled } : {}),
-          ...(cursorSecret !== undefined ? { secret: cursorSecret } : {}),
-        },
-      }
-    : cfg.adapters;
-  const hasGilesEnv =
-    gilesEnabled !== undefined ||
-    gilesHome !== undefined ||
-    gilesPollIntervalMs !== undefined;
-  const orchestratorsBase = cfg.orchestrators ?? DEFAULT_ORCHESTRATORS_CONFIG;
-  const orchestrators: AspexConfig["orchestrators"] = hasGilesEnv
-    ? {
-        ...orchestratorsBase,
-        giles: {
-          ...(orchestratorsBase.giles ?? { enabled: false, home: "~/giles" }),
-          ...(gilesEnabled !== undefined ? { enabled: gilesEnabled } : {}),
-          ...(gilesHome !== undefined ? { home: gilesHome } : {}),
-          ...(gilesPollIntervalMs !== undefined
-            ? { pollIntervalMs: gilesPollIntervalMs }
-            : {}),
-        },
-      }
-    : cfg.orchestrators;
-
-  const auth = hubToken !== undefined ? { token: hubToken } : cfg.auth;
-
-  return {
-    ...cfg,
-    auth,
-    hubPort: parseInteger(env.ASPEX_HUB_PORT, cfg.hubPort, "ASPEX_HUB_PORT"),
-    hubBind:
-      optionalNonEmptyEnv(env.ASPEX_HUB_BIND, "ASPEX_HUB_BIND") ?? cfg.hubBind,
-    corsOrigin:
-      optionalNonEmptyEnv(env.ASPEX_HUB_CORS_ORIGIN, "ASPEX_HUB_CORS_ORIGIN") ??
-      cfg.corsOrigin,
-    dbPath:
-      optionalNonEmptyEnv(env.ASPEX_DB_PATH, "ASPEX_DB_PATH") ?? cfg.dbPath,
-    needsMeCap: parseInteger(
-      env.ASPEX_NEEDS_ME_CAP,
-      cfg.needsMeCap,
-      "ASPEX_NEEDS_ME_CAP",
-    ),
-    pollIntervalMs: parseInteger(
-      env.ASPEX_POLL_INTERVAL_MS,
-      cfg.pollIntervalMs,
-      "ASPEX_POLL_INTERVAL_MS",
-    ),
-    github,
-    ntfy,
-    mock: parseBoolean(env.ASPEX_MOCK, cfg.mock, "ASPEX_MOCK"),
-    voice,
-    intent,
-    adapters,
-    orchestrators,
-    liveness: {
-      ...cfg.liveness,
-      pollGraceMs: parseInteger(
-        env.ASPEX_LIVENESS_POLL_GRACE_MS,
-        cfg.liveness?.pollGraceMs,
-        "ASPEX_LIVENESS_POLL_GRACE_MS",
-      ),
-      heartbeatGraceMs: parseInteger(
-        env.ASPEX_LIVENESS_HEARTBEAT_GRACE_MS,
-        cfg.liveness?.heartbeatGraceMs,
-        "ASPEX_LIVENESS_HEARTBEAT_GRACE_MS",
-      ),
-      quietAfterMs: parseInteger(
-        env.ASPEX_LIVENESS_QUIET_AFTER_MS,
-        cfg.liveness?.quietAfterMs,
-        "ASPEX_LIVENESS_QUIET_AFTER_MS",
-      ),
-      staleAfterMs: parseInteger(
-        env.ASPEX_LIVENESS_STALE_AFTER_MS,
-        cfg.liveness?.staleAfterMs,
-        "ASPEX_LIVENESS_STALE_AFTER_MS",
-      ),
-      lostAfterMs: parseInteger(
-        env.ASPEX_LIVENESS_LOST_AFTER_MS,
-        cfg.liveness?.lostAfterMs,
-        "ASPEX_LIVENESS_LOST_AFTER_MS",
-      ),
-    },
-  };
-}
-
-function normalizeConfig(cfg: AspexConfig): AspexConfig {
-  const normalized = {
-    ...cfg,
-    hubBind: normalizeHubBind(cfg.hubBind),
-    corsOrigin: normalizeCorsOrigin(cfg.corsOrigin),
-    dbPath: expandHome(cfg.dbPath),
-    voice: normalizeVoiceConfig(cfg.voice, cfg.mock),
-    intent: normalizeIntentConfig(cfg.intent, cfg.mock),
-    adapters: normalizeAdaptersConfig(cfg.adapters),
-    orchestrators: normalizeOrchestratorsConfig(cfg.orchestrators),
-  };
-
-  if (normalized.auth !== undefined) {
-    requireNonEmptySectionField(normalized.auth.token, "auth.token", "auth");
-  }
-
-  if (normalized.github !== undefined) {
-    requireNonEmptySectionField(
-      normalized.github.token,
-      "github.token",
-      "github",
-    );
-  }
-
-  if (normalized.ntfy !== undefined) {
-    requireNonEmptySectionField(normalized.ntfy.topic, "ntfy.topic", "ntfy");
-  }
-
-  return normalized;
-}
-
-function normalizeOrchestratorsConfig(
-  orchestrators: OrchestratorsConfig | undefined,
-): OrchestratorsConfig {
-  const merged = mergeOrchestratorsConfig(
-    DEFAULT_ORCHESTRATORS_CONFIG,
-    orchestrators,
-  );
-  const giles = merged?.giles ?? { enabled: false, home: "~/giles" };
-
-  if (typeof giles.enabled !== "boolean") {
-    throw new Error("orchestrators.giles.enabled must be a boolean");
-  }
-
-  if (typeof giles.home !== "string" || giles.home.trim() === "") {
-    throw new Error("orchestrators.giles.home must be a non-empty path");
-  }
-
-  if (
-    giles.pollIntervalMs !== undefined &&
-    (!Number.isInteger(giles.pollIntervalMs) || giles.pollIntervalMs <= 0)
-  ) {
-    throw new Error(
-      "orchestrators.giles.pollIntervalMs must be a positive integer when set",
-    );
-  }
-
-  return {
-    giles: {
-      enabled: giles.enabled,
-      home: expandHome(giles.home.trim()),
-      ...(giles.pollIntervalMs === undefined
-        ? {}
-        : { pollIntervalMs: giles.pollIntervalMs }),
-    },
-  };
-}
-
-function mergeOrchestratorsConfig(
-  base: OrchestratorsConfig | undefined,
-  override: ConfigFile["orchestrators"] | undefined,
-): OrchestratorsConfig | undefined {
-  if (override === undefined) {
-    return base;
-  }
-
-  return {
-    ...(base ?? DEFAULT_ORCHESTRATORS_CONFIG),
-    giles: {
-      ...(base?.giles ?? { enabled: false, home: "~/giles" }),
-      ...override.giles,
-    },
-  } as OrchestratorsConfig;
-}
-
-function normalizeHubBind(bind: unknown): string {
-  if (typeof bind !== "string" || bind.trim() === "") {
-    throw new Error("hubBind must be a non-empty host or address");
-  }
-
-  return bind.trim();
-}
-
-function normalizeCorsOrigin(origin: unknown): string | undefined {
-  if (origin === undefined) {
-    return undefined;
-  }
-
-  if (typeof origin !== "string" || origin.trim() === "") {
-    throw new Error("corsOrigin must be a non-empty origin when set");
-  }
-
-  try {
-    return new URL(origin.trim()).origin;
-  } catch {
-    throw new Error(
-      "corsOrigin must be a valid origin, e.g. http://hl2.tailnet:8080",
-    );
-  }
-}
-
-// The address local CLI clients (hook relay) dial to
-// reach the running Hub. A wildcard bind still serves loopback; a specific
-// bind serves only that address.
-export function hubClientHost(cfg: Pick<AspexConfig, "hubBind">): string {
-  const bind = cfg.hubBind;
-
-  if (bind === "0.0.0.0" || bind === "::" || bind === "*") {
-    return "127.0.0.1";
-  }
-
-  return bind.includes(":") ? `[${bind}]` : bind;
-}
-
-function normalizeAdaptersConfig(
-  adapters: AdaptersConfig | undefined,
-): AdaptersConfig {
-  const normalized = mergeAdaptersConfig(DEFAULT_CONFIG.adapters, adapters);
-
-  if (normalized === undefined) {
-    throw new Error("adapters config defaults are missing");
-  }
-
-  const codex = normalized.codex ?? { enabled: false };
-  const opencode = normalized.opencode ?? {
-    enabled: false,
-    serverUrl: "http://127.0.0.1:4096",
-  };
-  const cursor = normalized.cursor ?? { enabled: false };
-
-  if (typeof codex.enabled !== "boolean") {
-    throw new Error("adapters.codex.enabled must be a boolean");
-  }
-
-  if (typeof opencode.enabled !== "boolean") {
-    throw new Error("adapters.opencode.enabled must be a boolean");
-  }
-
-  if (typeof cursor.enabled !== "boolean") {
-    throw new Error("adapters.cursor.enabled must be a boolean");
-  }
-
-  if (
-    opencode.directory !== undefined &&
-    (typeof opencode.directory !== "string" || opencode.directory.trim() === "")
-  ) {
-    throw new Error(
-      "adapters.opencode.directory must be a non-empty string when set",
-    );
-  }
-
-  const serverUrl =
-    typeof opencode.serverUrl === "string" && opencode.serverUrl.trim() !== ""
-      ? opencode.serverUrl.trim()
-      : undefined;
-
-  if (opencode.enabled && serverUrl === undefined) {
-    throw new Error(
-      "adapters.opencode.serverUrl must be a non-empty valid URL when opencode is enabled",
-    );
-  }
-
-  const normalizedServerUrl =
-    opencode.enabled && serverUrl !== undefined
-      ? adapterBaseUrl(
-          serverUrl,
-          "adapters.opencode.serverUrl must be a non-empty valid URL when opencode is enabled",
-        )
-      : (opencode.serverUrl ?? "");
-
-  if (
-    cursor.enabled &&
-    (typeof cursor.secret !== "string" || cursor.secret.trim() === "")
-  ) {
-    throw new Error(
-      "adapters.cursor.secret must be a non-empty string when cursor is enabled",
-    );
-  }
-
-  return {
-    codex: { enabled: codex.enabled },
-    opencode: {
-      enabled: opencode.enabled,
-      serverUrl: normalizedServerUrl,
-      ...(opencode.directory === undefined
-        ? {}
-        : { directory: opencode.directory.trim() }),
-    },
-    cursor: {
-      enabled: cursor.enabled,
-      ...(cursor.secret === undefined ? {} : { secret: cursor.secret.trim() }),
-    },
-  };
-}
-
-function normalizeIntentConfig(
-  intent: IntentConfig | undefined,
-  globalMock: boolean | undefined,
-): IntentConfig {
-  const normalized = mergeIntentConfig(DEFAULT_CONFIG.intent, intent);
-
-  if (normalized === undefined) {
-    throw new Error("intent config defaults are missing");
-  }
-
-  const withMock = {
-    ...normalized,
-    mock: normalized.mock ?? (globalMock === true ? true : undefined),
-  };
-
-  if (typeof withMock.enabled !== "boolean") {
-    throw new Error("intent.enabled must be a boolean");
-  }
-
-  if (withMock.mock !== undefined && typeof withMock.mock !== "boolean") {
-    throw new Error("intent.mock must be a boolean");
-  }
-
-  if (typeof withMock.elevateConfirm !== "boolean") {
-    throw new Error("intent.elevateConfirm must be a boolean");
-  }
-
-  if (!Number.isInteger(withMock.timeoutMs) || withMock.timeoutMs <= 0) {
-    throw new Error("intent.timeoutMs must be a positive integer");
-  }
-
-  if (typeof withMock.model !== "string" || withMock.model.trim() === "") {
-    throw new Error("intent.model must be a non-empty string");
-  }
-
-  if (!Array.isArray(withMock.endpoints)) {
-    throw new Error("intent.endpoints must be an array");
-  }
-
-  if (
-    withMock.endpoints.some(
-      (endpoint) => typeof endpoint !== "string" || endpoint.trim() === "",
-    )
-  ) {
-    throw new Error("intent.endpoints must contain non-empty strings");
-  }
-
-  const endpoints = withMock.endpoints.map((endpoint) =>
-    intentBaseUrl(endpoint, "intent.endpoints"),
-  );
-
-  if (withMock.enabled && withMock.mock !== true && endpoints.length === 0) {
-    throw new Error(
-      "intent.endpoints must contain at least one endpoint when intent is enabled",
-    );
-  }
-
-  return {
-    ...withMock,
-    endpoints,
-    model: withMock.model.trim(),
-  };
-}
-
-function normalizeVoiceConfig(
-  voice: VoiceConfig | undefined,
-  globalMock: boolean | undefined,
-): VoiceConfig {
-  const normalized = mergeVoiceConfig(DEFAULT_CONFIG.voice, voice);
-
-  if (normalized === undefined) {
-    throw new Error("voice config defaults are missing");
-  }
-
-  const withMock = {
-    ...normalized,
-    mock: normalized.mock ?? (globalMock === true ? true : undefined),
-  };
-
-  if (
-    typeof withMock.confidenceThreshold !== "number" ||
-    !Number.isFinite(withMock.confidenceThreshold) ||
-    withMock.confidenceThreshold < 0 ||
-    withMock.confidenceThreshold > 1
-  ) {
-    throw new Error("voice.confidenceThreshold must be between 0 and 1");
-  }
-
-  if (
-    !Number.isInteger(withMock.stt.timeoutMs) ||
-    withMock.stt.timeoutMs <= 0
-  ) {
-    throw new Error("voice.stt.timeoutMs must be a positive integer");
-  }
-
-  if (!Number.isInteger(withMock.confirmTtlMs) || withMock.confirmTtlMs <= 0) {
-    throw new Error("voice.confirmTtlMs must be a positive integer");
-  }
-
-  if (typeof withMock.pttKey !== "string" || withMock.pttKey.trim() === "") {
-    throw new Error("voice.pttKey must be a non-empty string");
-  }
-
-  if (
-    withMock.stt.endpoints.some(
-      (endpoint) => typeof endpoint !== "string" || endpoint.trim() === "",
-    )
-  ) {
-    throw new Error("voice.stt.endpoints must contain non-empty strings");
-  }
-
-  if (
-    withMock.tts.endpoint !== undefined &&
-    (typeof withMock.tts.endpoint !== "string" ||
-      withMock.tts.endpoint.trim() === "")
-  ) {
-    throw new Error("voice.tts.endpoint must be a non-empty string when set");
-  }
-
-  const normalizedEndpoints = withMock.stt.endpoints.map((endpoint) =>
-    voiceContractUrl(endpoint, "/transcribe", "voice.stt.endpoints"),
-  );
-  const normalizedTtsEndpoint =
-    withMock.tts.endpoint === undefined
-      ? undefined
-      : voiceContractUrl(withMock.tts.endpoint, "/speak", "voice.tts.endpoint");
-  const normalizedVoice: VoiceConfig = {
-    ...withMock,
-    stt: { ...withMock.stt, endpoints: normalizedEndpoints },
-    tts:
-      normalizedTtsEndpoint === undefined
-        ? {}
-        : { ...withMock.tts, endpoint: normalizedTtsEndpoint },
-  };
-
-  if (
-    normalizedVoice.enabled &&
-    normalizedVoice.mock !== true &&
-    normalizedVoice.stt.endpoints.length === 0
-  ) {
-    throw new Error(
-      "voice.stt.endpoints must contain at least one endpoint when voice is enabled",
-    );
-  }
-
-  return normalizedVoice;
-}
-
-function parseInteger(
-  raw: string | undefined,
-  fallback: number | undefined,
-  name: string,
-): number {
-  if (raw === undefined) {
-    if (fallback === undefined) {
-      throw new Error(`${name} is required`);
-    }
-
-    return fallback;
-  }
-
-  const parsed = Number(raw);
-
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error(`${name} must be a positive integer`);
-  }
-
-  return parsed;
-}
-
-function parseBoolean(
-  raw: string | undefined,
-  fallback: boolean | undefined,
-  name: string,
-): boolean | undefined {
-  if (raw === undefined) {
-    return fallback;
-  }
-
-  const normalized = raw.trim().toLowerCase();
-
-  if (normalized === "true" || normalized === "1") {
-    return true;
-  }
-
-  if (normalized === "false" || normalized === "0") {
-    return false;
-  }
-
-  throw new Error(`${name} must be a boolean (true, false, 1, or 0)`);
-}
-
-function parseNumber(
-  raw: string | undefined,
-  fallback: number | undefined,
-  name: string,
-): number {
-  if (raw === undefined) {
-    if (fallback === undefined) {
-      throw new Error(`${name} is required`);
-    }
-
-    return fallback;
-  }
-
-  const parsed = Number(raw);
-
-  if (!Number.isFinite(parsed)) {
-    throw new Error(`${name} must be a number`);
-  }
-
-  return parsed;
-}
-
-function parseNtfySeverity(raw: string): Extract<Severity, "medium" | "high"> {
-  if (raw === "medium" || raw === "high") {
-    return raw;
-  }
-
-  throw new Error("ASPEX_NTFY_MIN_SEVERITY must be medium or high");
-}
-
-function parseCsv(raw: string | undefined): string[] | undefined {
-  if (raw === undefined) {
-    return undefined;
-  }
-
-  return raw
-    .split(",")
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
-}
-
-function optionalNonEmptyEnv(
-  raw: string | undefined,
-  name: string,
-): string | undefined {
-  if (raw === undefined) {
-    return undefined;
-  }
-
-  const trimmed = raw.trim();
-
-  if (trimmed.length === 0) {
-    throw new Error(`${name} must be a non-empty string`);
-  }
-
-  return trimmed;
-}
-
-function requireNonEmptySectionField(
-  value: unknown,
-  field: string,
-  section: string,
-): void {
-  if (typeof value !== "string" || value.trim() === "") {
-    throw new Error(
-      `${field} must be a non-empty string when ${section} is configured`,
-    );
-  }
-}
-
-function mergeOptionalObject<T extends object>(
-  base: T | undefined,
-  override: Partial<T> | undefined,
-): T | undefined {
-  if (override === undefined) {
-    return base;
-  }
-
-  return {
-    ...(base ?? {}),
-    ...override,
-  } as T;
-}
-
-function mergeVoiceConfig(
-  base: VoiceConfig | undefined,
-  override: ConfigFile["voice"] | undefined,
-): VoiceConfig | undefined {
-  if (override === undefined) {
-    return base;
-  }
-
-  return {
-    ...(base ?? DEFAULT_VOICE_CONFIG),
-    ...override,
-    stt: {
-      ...(base?.stt ?? DEFAULT_VOICE_CONFIG.stt),
-      ...override.stt,
-    },
-    tts: {
-      ...(base?.tts ?? DEFAULT_VOICE_CONFIG.tts),
-      ...override.tts,
-    },
-  } as VoiceConfig;
-}
-
-function mergeIntentConfig(
-  base: IntentConfig | undefined,
-  override: ConfigFile["intent"] | undefined,
-): IntentConfig | undefined {
-  if (override === undefined) {
-    return base;
-  }
-
-  return {
-    ...(base ?? DEFAULT_INTENT_CONFIG),
-    ...override,
-    endpoints:
-      override.endpoints ?? base?.endpoints ?? DEFAULT_INTENT_CONFIG.endpoints,
-  } as IntentConfig;
-}
-
-function mergeAdaptersConfig(
-  base: AdaptersConfig | undefined,
-  override: ConfigFile["adapters"] | undefined,
-): AdaptersConfig | undefined {
-  if (override === undefined) {
-    return base;
-  }
-
-  return {
-    ...(base ?? DEFAULT_ADAPTERS_CONFIG),
-    codex: {
-      ...(base?.codex ?? { enabled: false }),
-      ...override.codex,
-    },
-    opencode: {
-      ...(base?.opencode ?? {
-        enabled: false,
-        serverUrl: "http://127.0.0.1:4096",
-      }),
-      ...override.opencode,
-    },
-    cursor: {
-      ...(base?.cursor ?? { enabled: false }),
-      ...override.cursor,
-    },
-  } as AdaptersConfig;
-}
-
-function adapterBaseUrl(endpoint: string, message: string): string {
-  try {
-    const url = new URL(endpoint);
-    url.pathname = url.pathname.replace(/\/+$/, "");
-    if (url.pathname === "") {
-      url.pathname = "/";
-    }
-    url.hash = "";
-    url.search = "";
-    return url.toString().replace(/\/$/, "");
-  } catch {
-    throw new Error(message);
-  }
-}
-
-function intentBaseUrl(endpoint: string, field: string): string {
-  try {
-    const url = new URL(endpoint);
-    url.pathname = url.pathname.replace(/\/+$/, "");
-    if (url.pathname === "") {
-      url.pathname = "/";
-    }
-    url.hash = "";
-    url.search = "";
-    return url.toString().replace(/\/$/, "");
-  } catch {
-    throw new Error(`${field} must contain valid URLs`);
-  }
-}
-
-function voiceContractUrl(
-  endpoint: string,
-  contractPath: "/transcribe" | "/speak",
-  field: string,
-): string {
-  try {
-    const url = new URL(endpoint);
-    const trimmedPath = url.pathname.replace(/\/+$/, "");
-
-    if (trimmedPath === "" || trimmedPath === "/") {
-      url.pathname = contractPath;
-    } else if (trimmedPath.endsWith(contractPath)) {
-      url.pathname = trimmedPath;
-    } else {
-      url.pathname = `${trimmedPath}${contractPath}`;
-    }
-
-    url.hash = "";
-    url.search = "";
-    return url.toString();
-  } catch {
-    throw new Error(`${field} must contain valid URLs`);
-  }
 }
