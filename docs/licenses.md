@@ -1,7 +1,7 @@
 # Dependency License Registry
 
 Aspex core is licensed under Apache-2.0. This registry tracks the dependency
-license posture for the shipped core through Phase 3.
+license posture for the shipped core and the lab clients.
 
 As of this registry, the shipped core has no AGPL or GPL dependencies.
 
@@ -16,12 +16,15 @@ Sources checked:
 - `services/voice-server/pyproject.toml`
 - reference voice service source files
 - Phase 3 adapter package manifests
+- `apps/glimmer-lab/gradle/libs.versions.toml` and `apps/glimmer-lab/app/build.gradle.kts`
 
 ## JavaScript and TypeScript
 
 | Dependency | Use | License |
 | --- | --- | --- |
 | `hono` | Hub HTTP, REST, SSE | MIT |
+| `zod` | Hub config schema validation | MIT |
+| `eventsource-parser` | Fetch-based SSE parsing in the web and XR lab clients | MIT |
 | `@octokit/rest` | GitHub REST adapter | MIT |
 | `@octokit/*` family from lockfile | Octokit request, endpoint, auth, pagination helpers | MIT |
 | `react` | Web UI runtime | MIT |
@@ -36,8 +39,11 @@ Sources checked:
 | `tailwindcss` | Web CSS build tooling | MIT |
 | `postcss` | CSS processing | MIT |
 | `autoprefixer` | CSS processing | MIT |
+| `three` | XR lab WebXR rendering | MIT |
 | `@types/react` | Type declarations | MIT |
 | `@types/react-dom` | Type declarations | MIT |
+| `@types/three` | Type declarations | MIT |
+| `@types/webxr` | Type declarations | MIT |
 
 Workspace packages under `@aspex/*` are first-party Aspex packages.
 
@@ -53,6 +59,19 @@ HTTP endpoint. It adds no npm runtime dependency for the Intent service.
 Phase 3 codex, opencode, and cursor adapters are first-party workspace packages
 that depend only on `@aspex/schema`. The Hub links those packages but does not
 vendor code from the host-installed codex CLI, opencode CLI/server, or Cursor.
+
+## Android Glimmer Lab
+
+`apps/glimmer-lab` is a self-contained Gradle Android lab app outside the Bun workspace; its dependencies resolve from Google Maven and Maven Central, not from `bun.lock`.
+The authoritative list is `apps/glimmer-lab/gradle/libs.versions.toml`.
+
+| Dependency | Use | License |
+| --- | --- | --- |
+| AndroidX Compose (BOM, foundation, ui, material3, activity, lifecycle) | Glance-card UI | Apache-2.0 |
+| `androidx.xr.glimmer`, `androidx.xr.projected`, `androidx.xr.runtime` | AI-glasses Glimmer surface and projection | Apache-2.0 |
+| `kotlinx-coroutines-android`, `kotlinx-serialization-json` | Async and JSON wire parsing | Apache-2.0 |
+| `okhttp`, `okhttp-sse` | Hub HTTP and SSE client | Apache-2.0 |
+| `junit` 4 | Unit tests only | EPL-1.0 |
 
 ## Rust / Tauri
 

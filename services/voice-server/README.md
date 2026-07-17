@@ -6,15 +6,19 @@ Standalone FastAPI service for the Aspex voice-service HTTP contract:
 - `POST /speak` accepts `{ "text": string }` and returns `audio/wav`, or `204` when TTS is disabled.
 - `GET /health` returns `{ "ok": true, "stt": "parakeet"|"mock", "tts": "piper"|"mock"|"off" }`.
 
-The Hub never imports this code. Configure Aspex to call it over HTTP:
+The Hub never imports this code. Configure Aspex to call it over HTTP, in `~/.aspex/config.json`:
 
-```toml
-[voice.stt]
-endpoints = ["http://127.0.0.1:8901/transcribe"]
-
-[voice.tts]
-endpoint = "http://127.0.0.1:8901/speak"
+```json
+{
+  "voice": {
+    "enabled": true,
+    "stt": { "endpoints": ["http://127.0.0.1:8901/transcribe"] },
+    "tts": { "endpoint": "http://127.0.0.1:8901/speak" }
+  }
+}
 ```
+
+or with `ASPEX_VOICE_ENABLED=1 ASPEX_VOICE_STT=... ASPEX_VOICE_TTS=...`; the authoritative schema is `apps/hub/src/config.ts`.
 
 ## Local mock mode
 
