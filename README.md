@@ -160,7 +160,7 @@ When you supply `ASPEX_HUB_TOKEN`, make the same environment variable available
 to every local caller that must reach the Hub, such as `aspex hook-relay`,
 because the token is intentionally not persisted for them to read.
 
-Clients present it as an `Authorization: Bearer <token>` header on every endpoint, including the SSE stream (both first-party clients stream over fetch-based SSE).
+Clients present it as an `Authorization: Bearer <token>` header on every endpoint, including the SSE stream (every first-party client sends the header on the stream).
 The stream also still accepts a `?token=<token>` query parameter, but that form is deprecated: it survives only as the escape hatch for native `EventSource` clients, which cannot set request headers, and its removal is deferred until after the owner's on-device wear test.
 
 The one exception is `POST /webhooks/cursor`: it authenticates with its own

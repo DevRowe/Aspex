@@ -216,7 +216,7 @@ internal fun adapterFailureMessage(body: String): String? =
 /**
  * Builds the `/actions/:itemId/:actionId` path with each id percent-encoded
  * as its own segment, mirroring the other clients' `encodeURIComponent`
- * (apps/web `hubClient.ts`, apps/hl2-lab `direction.ts`): GitHub item ids
+ * (apps/web `hubClient.ts`, apps/xr-lab `direction.ts`): GitHub item ids
  * contain `/` (owner/repo), which would otherwise split into an extra path
  * segment and 404 on the Hub's route.
  */

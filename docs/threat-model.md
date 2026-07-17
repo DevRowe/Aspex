@@ -58,7 +58,7 @@ variable to every local caller that should reach the Hub, such as Claude Code
 hook relay processes, because env tokens are intentionally not persisted.
 
 Clients send `Authorization: Bearer <token>`.
-Both first-party clients (the XR lab and the legacy web cockpit) consume the SSE stream over fetch-based SSE and send that same header.
+The first-party browser clients (the XR lab and the legacy web cockpit) consume the SSE stream over fetch-based SSE, the Android Glimmer lab over OkHttp SSE, and all send that same header.
 The stream also still accepts the token as a `?token=` query parameter, but that form is deprecated: it remains only as the escape hatch for native `EventSource` clients, which cannot set headers, and its removal is deferred until after the owner's on-device wear test.
 The tradeoff is that a query-string token can leak into logs, which is accepted for a local stream today and a future private-tailnet stream.
 The token is compared in constant time over fixed-length digests, and a missing or wrong token returns `401`.
