@@ -142,6 +142,12 @@ Its primary target is Android XR; HoloLens 2 remains a device it still runs on a
 It is deliberately isolated from the legacy cockpit and is not a supported product target.
 Run the desktop simulator with `bun run --cwd apps/xr-lab dev`, type-check it with `bun run --cwd apps/xr-lab typecheck`, build it with `bun run build:xr-lab`, and follow the pairing and on-device checklist in [docs/xr-lab.md](docs/xr-lab.md).
 
+## AI Glasses Glimmer lab
+
+The Android client in `apps/glimmer-lab` is the glance-tier sibling of the WebXR lab: a phone-resident Compose Glimmer + Jetpack Projected prototype that renders the top attention item as a glanceable card on the Android XR AI Glasses emulator, against the real Hub HTTP/SSE API.
+It is the monorepo's first non-Bun app - a self-contained Gradle project, not part of the Bun workspace or `bun test`.
+SDK setup, emulator setup, run steps, and the verification runbook live in [apps/glimmer-lab/README.md](apps/glimmer-lab/README.md).
+
 ## Hub API auth
 
 By default the Hub binds `127.0.0.1` and the browser CORS allowlist is localhost/Tauri-only, so it is same-machine unless you opt in.

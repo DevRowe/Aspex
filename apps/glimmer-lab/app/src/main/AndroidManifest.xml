@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="Aspex Glance"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:theme="@android:style/Theme.Material.NoActionBar">
+
+        <!-- Phone-side companion: connection status + manual glasses launch. -->
+        <activity
+            android:name=".phone.PhoneActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Glasses-side glance surface, projected via Jetpack Projected.
+             XR_PROJECTED_LAUNCHER makes it discoverable by the system/Gemini
+             voice launcher ("open Aspex Glance"). -->
+        <activity
+            android:name=".glasses.GlassesActivity"
+            android:exported="true"
+            android:requiredDisplayCategory="android.hardware.display.category.XR_PROJECTED">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.XR_PROJECTED_LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

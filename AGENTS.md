@@ -31,6 +31,7 @@ The Hub-side half of the Aspex-orchestrator protocol (design report: giles task 
 - **Hub config is one zod v4 schema** (`apps/hub/src/config.ts`): defaults live inline via `.default()`/`.prefault()`, env vars map through its `ENV_OVERRIDES` table, and boot errors are formatted from ZodError paths - extend the schema and table there instead of adding hand-rolled parsers or `DEFAULT_*` constants.
 - Long Markdown docs are written one sentence per line.
 - **XR lab commands.** `apps/xr-lab` is an unsupported, lab-only, device-neutral WebXR design instrument (Android XR primary target, HL2 demoted to a wear-test jig), never a product target or a legacy-cockpit extension; use `bun run --cwd apps/xr-lab dev`, `bun run build:xr-lab`, and `bun run test:xr-lab`, with capability-gated input in `apps/xr-lab/src/capabilities.ts` and on-device pairing and wear-test notes in `docs/xr-lab.md`.
+- **Glimmer lab (`apps/glimmer-lab`) is Gradle, not Bun.** The AI-glasses glance client is the monorepo's first non-Bun app: a self-contained Android project (JDK 21, AGP 9.x with built-in Kotlin - never apply `org.jetbrains.kotlin.android`; compileSdk 37). Gates are `./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug` inside that directory; SDK/emulator setup and the verification runbook are in its README. Its `build/` output and the verbatim wire fixture stay in the `biome.json` ignore list; do not pull it into the Bun workspace or `bun test`.
 
 ## Sharp edges
 

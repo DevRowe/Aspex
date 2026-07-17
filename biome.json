@@ -13,6 +13,9 @@
       ".claude/settings.local.json",
       "apps/web/dist/**",
       "apps/xr-lab/dist/**",
+      "apps/glimmer-lab/**/build/**",
+      "apps/glimmer-lab/.gradle/**",
+      "apps/glimmer-lab/app/src/test/resources/**",
       "**/target/**",
       "apps/desktop/src-tauri/gen/schemas/**"
     ]

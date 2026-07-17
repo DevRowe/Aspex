@@ -20,6 +20,8 @@ bun test
 bun run lint
 ```
 
+These Bun checks do not cover the Gradle-based `apps/glimmer-lab` Android project; when changing it, run its own gates per [apps/glimmer-lab/README.md](apps/glimmer-lab/README.md).
+
 Run mock mode while developing the legacy browser cockpit:
 
 ```sh
